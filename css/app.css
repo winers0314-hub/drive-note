@@ -63,7 +63,15 @@ button { cursor: pointer; }
 .toggle.is-on b { background: var(--ok); color: #fff; }
 .grp.note { color: var(--muted); font-size: 12.5px; max-width: 360px; white-space: normal; border: 0; }
 .fi { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 4px; color: #fff; font-weight: 800; font-size: 12px; }
-.fi.hwp { background: #2b7cd3; } .fi.xls { background: #1e7b45; }
+.fi.hwp { background: #2b7cd3; } .fi.xls { background: #1e7b45; } .fi.one { background: #7719aa; }
+.on-list { max-height: 46vh; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; margin-top: 10px; }
+.on-list label { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.on-list label:last-child { border-bottom: 0; }
+.on-list label:hover { background: var(--hover); }
+.on-list small { display: block; color: var(--muted); }
+.progress { height: 6px; border-radius: 99px; background: var(--line); overflow: hidden; margin: 14px 0 6px; }
+.progress i { display: block; height: 100%; width: 0; background: var(--brand); transition: width .3s; }
+.prog-text { font-size: 13px; color: var(--muted); min-height: 1.5em; }
 .table-ops button { font-size: 12.5px; }
 .table-ops.off button { opacity: .38; pointer-events: none; }
 

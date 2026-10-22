@@ -4,6 +4,7 @@ import { setupEditor, exec, formatBlock, fontSize, insertHTML, insertText, toggl
 import { sanitize, parseHTML, toLines } from './doc.js';
 import { toHwpx } from './hwpx.js';
 import { toXlsx } from './xlsx.js';
+import { msLogin, msSignedIn, listNotebooks, listPages, pageContent, convertPage } from './onenote.js';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -732,6 +733,89 @@ function welcome() {
     m.querySelector('#wDrive').onclick = () => { delete $('modal').dataset.locked; closeModal(); localStorage.setItem('dn-mode', 'drive'); startDrive(true); };
     m.querySelector('#wLocal').onclick = () => { delete $('modal').dataset.locked; closeModal(); localStorage.setItem('dn-mode', 'local'); startLocal(); };
   });
+}
+
+// ---------- 원노트에서 가져오기 ----------
+const MS_ID = (window.NOTE_CONFIG && window.NOTE_CONFIG.msClientId || '').trim();
+$('importOneNote').onclick = () => {
+  if (!store || !ix) return toast('먼저 저장 위치를 고르세요.');
+  if (!MS_ID) return modal(`<h2>원노트에서 가져오기</h2><p>마이크로소프트 연결 설정이 아직 안 돼 있어요. README.md의 “원노트 가져오기 준비” 순서대로 config.js의 <b>msClientId</b>를 채우면 쓸 수 있어요.</p><div class="row"><button class="btn primary" id="onOk">확인</button></div>`, m => { m.querySelector('#onOk').onclick = closeModal; });
+  modal(`<h2>원노트에서 가져오기</h2>
+    <p>마이크로소프트 계정으로 로그인하면 원노트 전자 필기장을 골라서 에스 노트로 옮겨요. 원노트는 읽기만 해서 원래 노트는 그대로 남아요.</p>
+    <p style="font-size:12.5px">글·표·목록·할 일·그림·첨부 파일을 옮겨요. 펜으로 쓴 손글씨는 원노트가 내보내 주지 않아서 빠질 수 있어요.</p>
+    <div class="row"><button class="btn" id="onNo">취소</button><button class="btn primary" id="onGo">마이크로소프트로 로그인</button></div>`, m => {
+    m.querySelector('#onNo').onclick = closeModal;
+    m.querySelector('#onGo').onclick = async () => {
+      try { if (!msSignedIn()) await msLogin(MS_ID); } catch (e) { return toast(e.message, [], 8000); }
+      pickNotebooks();
+    };
+  });
+};
+async function pickNotebooks() {
+  modal(`<h2>원노트 전자 필기장을 불러오는 중…</h2><div class="progress"><i style="width:35%"></i></div>`);
+  let nbs;
+  try { nbs = await listNotebooks(); } catch (e) { closeModal(); return handleErr(e); }
+  if (!nbs.length) { closeModal(); return toast('원노트에 전자 필기장이 없어요.'); }
+  const done = new Set(allPages().map(x => x.p.onId).filter(Boolean));
+  modal(`<h2>가져올 전자 필기장을 고르세요</h2><p>${done.size ? `이미 가져온 페이지 ${done.size}개는 건너뛰고 나머지만 가져와요.` : '고른 전자 필기장의 모든 섹션과 페이지를 가져와요.'}</p>
+    <div class="on-list">${nbs.map((nb, i) => `<label><input type="checkbox" data-i="${i}" checked><span><b>${esc(nb.name)}</b><small>섹션 ${nb.sections.length}개 · ${esc(nb.sections.slice(0, 4).map(s => s.name).join(', '))}${nb.sections.length > 4 ? ' …' : ''}</small></span></label>`).join('')}</div>
+    <div class="row"><button class="btn" id="onNo">취소</button><button class="btn primary" id="onGo">가져오기</button></div>`, m => {
+    m.querySelector('#onNo').onclick = closeModal;
+    m.querySelector('#onGo').onclick = () => {
+      const sel = [...m.querySelectorAll('input:checked')].map(i => nbs[+i.dataset.i]);
+      if (sel.length) runImport(sel, done);
+    };
+  });
+}
+async function runImport(nbs, done) {
+  let cancel = false, authStop = false;
+  $('modal').dataset.locked = '1';
+  modal(`<h2>원노트에서 가져오는 중</h2><div class="progress"><i id="onBar"></i></div><div class="prog-text" id="onText">페이지 목록을 세는 중…</div>
+    <p style="font-size:12.5px">이 창을 닫지 마세요. 중간에 멈춰도 다시 [원노트에서 가져오기]를 누르면 이어서 가져와요.</p>
+    <div class="row"><button class="btn" id="onStop">멈추기</button></div>`, m => {
+    m.querySelector('#onStop').onclick = e => { cancel = true; e.target.disabled = true; $('onText').textContent = '지금 페이지까지만 가져오고 멈출게요…'; };
+  });
+  const show = (k, n, text) => { $('onBar').style.width = (n ? Math.round(k / n * 100) : 3) + '%'; $('onText').textContent = text; };
+  const finish = msg => { delete $('modal').dataset.locked; closeModal(); renderAll(); if (cur.sec) renderPages(); toast(msg, [], 12000); };
+  // 1) 섹션마다 페이지 목록
+  const plan = [];
+  try {
+    for (const nb of nbs) for (const s of nb.sections) {
+      if (cancel) break;
+      show(0, 0, `페이지 목록을 세는 중… ${nb.name} › ${s.name}`);
+      plan.push({ nb, s, pages: await listPages(s.id) });
+    }
+  } catch (e) { finish('원노트 목록을 읽지 못했어요.'); return handleErr(e); }
+  const total = plan.reduce((a, x) => a + x.pages.filter(p => !done.has(p.id)).length, 0);
+  // 2) 페이지 하나씩: 내용 → 그림·첨부를 내 저장소로 → 페이지 저장
+  let k = 0, ok = 0, fail = 0;
+  for (const { nb, s, pages } of plan) {
+    if (cancel) break;
+    let myNb = ix.notebooks.find(x => x.onId === nb.id);
+    if (!myNb) { myNb = { id: uid(), name: nb.name, onId: nb.id, sections: [] }; ix.notebooks.push(myNb); }
+    let mySec = myNb.sections.find(x => x.onId === s.id);
+    if (!mySec) { mySec = { id: uid(), name: s.name, onId: s.id, color: SECTION_COLORS[myNb.sections.length % SECTION_COLORS.length], pages: [] }; myNb.sections.push(mySec); }
+    for (const op of pages) {
+      if (cancel) break;
+      if (done.has(op.id)) continue;
+      show(k, total, `${++k} / ${total} · ${nb.name} › ${s.name} › ${op.title || '제목 없음'}`);
+      try {
+        const html = await convertPage(await pageContent(op.id), (blob, name) => store.putFile(blob, name));
+        const p = { id: uid(), onId: op.id, title: op.title || '', created: Date.parse(op.createdDateTime) || Date.now(), updated: Date.parse(op.lastModifiedDateTime) || Date.now(), level: op.level ? 1 : 0, snip: plain(html).slice(0, 80) };
+        await store.savePage(p, html);
+        mySec.pages.push(p); done.add(op.id); ok++;
+        if (ok % 5 === 0) { scheduleIndexSave(); await saveIndexNow(); }
+      } catch (e) {
+        console.warn('원노트 페이지 가져오기 실패', op.title, e);
+        if (e.auth) { authStop = cancel = true; break; } // 구글 로그인이 끝남 → 멈추고 다시 로그인
+        fail++;
+      }
+    }
+  }
+  scheduleIndexSave(); await saveIndexNow();
+  if (authStop) { finish(`${ok}개를 가져오고 멈췄어요. 구글에 다시 로그인한 뒤 [원노트에서 가져오기]를 누르면 이어서 가져와요.`); return handleErr({ auth: true }); }
+  finish(cancel ? `${ok}개를 가져오고 멈췄어요. 다시 [원노트에서 가져오기]를 누르면 이어서 가져와요.`
+    : `원노트 페이지 ${ok}개를 가져왔어요.${fail ? ` ${fail}개는 가져오지 못했어요. 다시 [원노트에서 가져오기]를 누르면 그것만 다시 시도해요.` : ''} 전자 필기장 목록에서 확인하세요.`);
 }
 
 // ---------- 프로그램으로 설치 (PWA) ----------

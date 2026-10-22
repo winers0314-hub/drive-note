@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="ko">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>에스 노트 · 로그인</title></head>
+<body style="font-family:system-ui,sans-serif;color:#37352f;display:grid;place-items:center;height:100vh;margin:0">
+<p>로그인을 마쳤어요. 이 창은 곧 닫혀요.</p>
+<script>
+  // 마이크로소프트 로그인이 끝나면 돌아오는 페이지: 결과를 원래 창에 전달
+  var r = location.search;
+  try { localStorage.setItem('ms-auth-result', r); } catch (e) {}
+  try { if (window.opener) window.opener.postMessage({ msAuth: r }, location.origin); } catch (e) {}
+  setTimeout(function () { window.close(); }, 400);
+</script>
+</body>
+</html>

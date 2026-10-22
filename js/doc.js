@@ -118,7 +118,7 @@ export function sanitize(html, { keepFiles = true } = {}) {
         if (!ok) n.removeAttribute(a.name);
       }
       if (n.hasAttribute('style')) {
-        const css = n.getAttribute('style').split(';').map(d => d.trim()).filter(d => { const k = d.split(':')[0]?.trim().toLowerCase(); return CSS_OK.test(k) && !/url\(|expression/i.test(d); }).join('; ');
+        const css = n.getAttribute('style').split(';').map(d => d.trim()).filter(d => { const k = d.split(':')[0]?.trim().toLowerCase(); return CSS_OK.test(k) && (k !== 'width' || tag === 'img') && !/url\(|expression/i.test(d); }).join('; ');
         if (css) n.setAttribute('style', css); else n.removeAttribute('style');
       }
       if (tag === 'a') { n.setAttribute('target', '_blank'); n.setAttribute('rel', 'noopener'); }
