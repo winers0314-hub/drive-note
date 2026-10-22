@@ -1135,11 +1135,18 @@ async function pickNotebooks() {
   if (!nbs.length) { closeModal(); return toast('원노트에 전자 필기장이 없어요.'); }
   const done = new Set(allPages().map(x => x.p.onId).filter(Boolean));
   modal(`<h2>가져올 전자 필기장을 고르세요</h2><p>${done.size ? `이미 가져온 페이지 ${done.size}개는 건너뛰고 나머지만 가져와요.` : '고른 전자 필기장의 모든 섹션과 페이지를 가져와요.'}</p>
+    <div class="on-tools"><span id="onCount"></span><button class="btn" id="onAll">전체 선택</button><button class="btn" id="onNone">전체 해제</button></div>
     <div class="on-list">${nbs.map((nb, i) => `<label><input type="checkbox" data-i="${i}" checked><span><b>${esc(nb.name)}</b><small>섹션 ${nb.sections.length}개 · ${esc(nb.sections.slice(0, 4).map(s => s.name).join(', '))}${nb.sections.length > 4 ? ' …' : ''}</small></span></label>`).join('')}</div>
     <div class="row"><button class="btn" id="onNo">취소</button><button class="btn primary" id="onGo">가져오기</button></div>`, m => {
+    const boxes = [...m.querySelectorAll('.on-list input')];
+    const count = () => { const n = boxes.filter(b => b.checked).length; m.querySelector('#onCount').textContent = `${nbs.length}개 중 ${n}개 선택`; m.querySelector('#onGo').disabled = !n; };
+    m.querySelector('#onAll').onclick = () => { boxes.forEach(b => { b.checked = true; }); count(); };
+    m.querySelector('#onNone').onclick = () => { boxes.forEach(b => { b.checked = false; }); count(); };
+    m.querySelector('.on-list').onchange = count;
+    count();
     m.querySelector('#onNo').onclick = closeModal;
     m.querySelector('#onGo').onclick = () => {
-      const sel = [...m.querySelectorAll('input:checked')].map(i => nbs[+i.dataset.i]);
+      const sel = boxes.filter(b => b.checked).map(b => nbs[+b.dataset.i]);
       if (sel.length) runImport(sel, done);
     };
   });
