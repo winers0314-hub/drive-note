@@ -1,15 +1,15 @@
 // 저장소 두 가지 — 같은 함수를 가짐
-//  DriveStore: 내 구글 드라이브의 "드라이브 노트" 폴더 (이 앱이 만든 파일만 접근: drive.file 권한)
+//  DriveStore: 내 구글 드라이브의 "에스 노트" 폴더 (이 앱이 만든 파일만 접근: drive.file 권한)
 //  LocalStore: 이 기기 브라우저 안 (체험용)
 //
 // 드라이브 폴더 구성
-//  드라이브 노트/index.json       전자 필기장·섹션·페이지 목록
-//  드라이브 노트/페이지/*.html     페이지 내용 (페이지마다 파일 하나)
-//  드라이브 노트/첨부 파일/*       그림·첨부 파일
-//  드라이브 노트/내보내기/*        한글·엑셀로 바꾼 파일
+//  에스 노트/index.json       전자 필기장·섹션·페이지 목록
+//  에스 노트/페이지/*.html     페이지 내용 (페이지마다 파일 하나)
+//  에스 노트/첨부 파일/*       그림·첨부 파일
+//  에스 노트/내보내기/*        한글·엑셀로 바꾼 파일
 
 export const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-export const SECTION_COLORS = ['#7719aa', '#2b7cd3', '#1e9e6a', '#e8912d', '#d6336c', '#0f8b8d', '#8d6e63', '#5c6bc0'];
+export const SECTION_COLORS = ['#529cca', '#4dab9a', '#ffa344', '#e255a1', '#9a6dd7', '#ff7369', '#937264', '#9b9a97']; // 노션 색
 
 export function newIndex() {
   return {
@@ -130,8 +130,20 @@ export class DriveStore {
   }
   async download(id) { return (await this.api(`${API}/files/${id}?alt=media`, {}, true)).blob(); }
 
+  // 앱 폴더: "에스 노트" (예전 이름 "드라이브 노트" 폴더가 있으면 이름만 바꿔서 그대로 씀)
+  async rootFolder() {
+    const find = name => this.list(`name='${q(name)}' and mimeType='application/vnd.google-apps.folder' and trashed=false and 'root' in parents`);
+    const now = await find('에스 노트');
+    if (now.length) return now[0].id;
+    const old = await find('드라이브 노트');
+    if (old.length) {
+      await this.api(`${API}/files/${old[0].id}?fields=id`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: '에스 노트' }) });
+      return old[0].id;
+    }
+    return this.folder('에스 노트');
+  }
   async init() {
-    this.root = await this.folder('드라이브 노트');
+    this.root = await this.rootFolder();
     [this.pagesDir, this.filesDir] = await Promise.all([this.folder('페이지', this.root), this.folder('첨부 파일', this.root)]);
   }
   async loadIndex() {

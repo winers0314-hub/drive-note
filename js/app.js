@@ -1,4 +1,4 @@
-// 드라이브 노트 — 화면과 동작
+// 에스 노트 — 화면과 동작
 import { DriveStore, LocalStore, newIndex, uid, SECTION_COLORS } from './store.js';
 import { setupEditor, exec, formatBlock, fontSize, insertHTML, insertText, toggleChecklist, tableHTML, tableOp, addFile, caretIn, hideImgBar, sizeText } from './editor.js';
 import { sanitize, parseHTML, toLines } from './doc.js';
@@ -19,7 +19,7 @@ function applySettings() {
   if (S.theme === 'system') document.documentElement.removeAttribute('data-theme'); else document.documentElement.dataset.theme = S.theme;
   const q = $('autoQuick'); q.classList.toggle('is-on', S.auto); q.querySelector('b').textContent = S.auto ? '켬' : '끔';
   $('convertNote').textContent = store?.kind === 'drive'
-    ? (S.exportToDrive ? '바꾼 파일은 내려받기 되고, 드라이브 "드라이브 노트/내보내기" 폴더에도 저장돼요.' : '바꾼 파일은 이 기기에 내려받기 돼요.') + (S.autoExport !== 'none' ? ` · 자동 변환 켬(${AUTO_LABEL[S.autoExport]})` : '')
+    ? (S.exportToDrive ? '바꾼 파일은 내려받기 되고, 드라이브 "에스 노트/내보내기" 폴더에도 저장돼요.' : '바꾼 파일은 이 기기에 내려받기 돼요.') + (S.autoExport !== 'none' ? ` · 자동 변환 켬(${AUTO_LABEL[S.autoExport]})` : '')
     : '바꾼 파일은 이 기기에 내려받기 돼요. 한글 파일은 .hwpx 형식이라 한글 2014 이후 버전에서 열려요.';
 }
 const AUTO_LABEL = { none: '안 함', hwpx: '한글', xlsx: '엑셀', both: '한글+엑셀' };
@@ -614,7 +614,7 @@ function settingsModal() {
       <p style="font-size:12.5px">바뀐 직후 <b>백스페이스</b>를 누르면 그 한 번만 원래 글자로 되돌아가요.</p></div>
     <div class="set"><h3>그림</h3>${sw('shrink', '큰 사진은 줄여서 올리기', '긴 쪽 1600픽셀로 줄여 저장공간을 아껴요. 끄면 원본 그대로 올려요.')}</div>
     <div class="set"><h3>한글·엑셀 변환</h3>
-      ${sw('exportToDrive', '바꾼 파일을 드라이브에도 저장', drive ? '“드라이브 노트/내보내기” 폴더에 저장돼요.' : '구글 드라이브에 연결하면 쓸 수 있어요.')}
+      ${sw('exportToDrive', '바꾼 파일을 드라이브에도 저장', drive ? '“에스 노트/내보내기” 폴더에 저장돼요.' : '구글 드라이브에 연결하면 쓸 수 있어요.')}
       <div class="sw-row" style="cursor:default"><span>자동 변환<small>${drive ? '페이지를 고치고 다른 페이지로 넘어갈 때, 그 페이지를 드라이브 “내보내기” 폴더에 자동으로 변환해 둬요.' : '구글 드라이브에 연결하면 쓸 수 있어요.'}</small></span></div>
       <div class="radio-row">${Object.entries(AUTO_LABEL).map(([v, l]) => `<label><input type="radio" name="autoExport" value="${v}" ${S.autoExport === v ? 'checked' : ''} ${drive ? '' : 'disabled'}>${l}</label>`).join('')}</div></div>
     <div class="set"><h3>화면</h3><div class="radio-row">${[['system', '기기 설정 따라'], ['light', '밝게'], ['dark', '어둡게']].map(([v, l]) => `<label><input type="radio" name="theme" value="${v}" ${S.theme === v ? 'checked' : ''}>${l}</label>`).join('')}</div></div>
@@ -637,7 +637,7 @@ function settingsModal() {
 function storageModal() {
   const drive = store?.kind === 'drive';
   modal(`<h2>저장 위치</h2>
-    ${drive ? `<p>지금 노트는 <b>구글 드라이브</b>의 “드라이브 노트” 폴더에 저장돼요. 이 앱은 자기가 만든 파일만 볼 수 있어요.</p>
+    ${drive ? `<p>지금 노트는 <b>구글 드라이브</b>의 “에스 노트” 폴더에 저장돼요. 이 앱은 자기가 만든 파일만 볼 수 있어요.</p>
       <button class="choice" id="stOpen"><b>드라이브에서 폴더 열기</b><small>그림·첨부 파일·내보낸 파일을 드라이브에서 직접 볼 수 있어요.</small></button>
       <button class="choice" id="stMigrate"><b>이 기기에 있던 노트를 드라이브로 옮기기</b><small>체험 모드로 쓴 노트가 있으면 드라이브로 복사해요.</small></button>
       <button class="choice" id="stOut"><b>로그아웃</b><small>노트는 드라이브에 그대로 남아요.</small></button>`
@@ -719,20 +719,37 @@ async function startDrive(interactive, offerMigrate) {
 }
 // 새로 열 때마다 구글 로그인 버튼 한 번 (팝업은 버튼을 눌러야 열려서)
 function driveGate() {
-  showEmpty(`<h2>구글 드라이브에 연결해 주세요</h2><p>노트는 내 구글 드라이브의 “드라이브 노트” 폴더에 저장돼요.</p><div class="btns"><button class="btn primary" id="gateGo">구글로 로그인</button><button class="btn" id="gateLocal">이 기기에서 체험하기</button></div>`);
+  showEmpty(`<h2>구글 드라이브에 연결해 주세요</h2><p>노트는 내 구글 드라이브의 “에스 노트” 폴더에 저장돼요.</p><div class="btns"><button class="btn primary" id="gateGo">구글로 로그인</button><button class="btn" id="gateLocal">이 기기에서 체험하기</button></div>`);
   $('account').textContent = '로그인 필요'; status('', '');
   $('gateGo').onclick = () => startDrive(true);
   $('gateLocal').onclick = () => { localStorage.setItem('dn-mode', 'local'); startLocal(); };
 }
 function welcome() {
   $('modal').dataset.locked = '1';
-  modal(`<div class="welcome"><span class="logo">N</span><h2>드라이브 노트에 오신 걸 환영해요</h2><p>노트를 어디에 저장할까요? 나중에 설정에서 바꿀 수 있어요.</p>
-    <button class="choice" id="wDrive" ${CLIENT_ID ? '' : 'disabled'}><b>☁ 구글 드라이브에 저장 (추천)</b><small>${CLIENT_ID ? '휴대폰·컴퓨터 어디서나 같은 노트를 볼 수 있어요. 내 드라이브의 “드라이브 노트” 폴더만 사용해요.' : '아직 구글 연결 설정이 안 돼 있어요. README.md의 순서대로 config.js에 클라이언트 ID를 넣으면 쓸 수 있어요.'}</small></button>
+  modal(`<div class="welcome"><span class="logo">S</span><h2>에스 노트에 오신 걸 환영해요</h2><p>노트를 어디에 저장할까요? 나중에 설정에서 바꿀 수 있어요.</p>
+    <button class="choice" id="wDrive" ${CLIENT_ID ? '' : 'disabled'}><b>☁ 구글 드라이브에 저장 (추천)</b><small>${CLIENT_ID ? '휴대폰·컴퓨터 어디서나 같은 노트를 볼 수 있어요. 내 드라이브의 “에스 노트” 폴더만 사용해요.' : '아직 구글 연결 설정이 안 돼 있어요. README.md의 순서대로 config.js에 클라이언트 ID를 넣으면 쓸 수 있어요.'}</small></button>
     <button class="choice" id="wLocal"><b>💾 이 기기에만 저장 (체험)</b><small>로그인 없이 바로 써 볼 수 있어요. 다른 기기와 연동되지 않아요.</small></button></div>`, m => {
     m.querySelector('#wDrive').onclick = () => { delete $('modal').dataset.locked; closeModal(); localStorage.setItem('dn-mode', 'drive'); startDrive(true); };
     m.querySelector('#wLocal').onclick = () => { delete $('modal').dataset.locked; closeModal(); localStorage.setItem('dn-mode', 'local'); startLocal(); };
   });
 }
+
+// ---------- 프로그램으로 설치 (PWA) ----------
+let installEvt = null;
+const installed = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => {});
+addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; });
+addEventListener('appinstalled', () => { installEvt = null; $('installApp').hidden = true; toast('설치했어요. 바탕화면이나 시작 메뉴의 “에스 노트”로 열 수 있어요.', [], 6000); });
+if (installed()) $('installApp').hidden = true;
+$('installApp').onclick = async () => {
+  if (installEvt) { installEvt.prompt(); const r = await installEvt.userChoice; if (r.outcome === 'accepted') installEvt = null; return; }
+  modal(`<h2>프로그램으로 설치하기</h2>
+    <div class="set"><h3>💻 컴퓨터 (크롬·엣지)</h3><p>주소창 오른쪽 끝의 <b>설치 아이콘(⊕ 또는 모니터 모양)</b>을 누르거나, 메뉴 <b>⋮ → 앱 설치</b>(엣지는 <b>⋯ → 앱 → 이 사이트를 앱으로 설치</b>)를 누르세요. 바탕화면과 시작 메뉴에 “에스 노트”가 생겨요.</p></div>
+    <div class="set"><h3>📱 안드로이드 (크롬)</h3><p>오른쪽 위 <b>⋮ → 홈 화면에 추가 → 설치</b>를 누르세요.</p></div>
+    <div class="set"><h3>📱 아이폰·아이패드 (사파리)</h3><p>아래 <b>공유 버튼(□↑) → 홈 화면에 추가</b>를 누르세요.</p></div>
+    <p>이미 설치했다면 바탕화면·시작 메뉴·홈 화면에서 “에스 노트”를 찾으세요.</p>
+    <div class="row"><button class="btn primary" id="insOk">확인</button></div>`, m => { m.querySelector('#insOk').onclick = closeModal; });
+};
 
 setupEditor($('editor'), {
   onChange: markDirty,
