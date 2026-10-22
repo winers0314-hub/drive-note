@@ -12,13 +12,16 @@ const CLIENT_ID = (window.NOTE_CONFIG && window.NOTE_CONFIG.googleClientId || ''
 const narrow = () => matchMedia('(max-width: 820px)').matches;
 
 // ---------- 설정 (이 기기에 저장) ----------
-const DEFAULTS = { auto: true, autoNumber: true, autoBullet: true, autoCheck: true, shrink: true, exportToDrive: true, autoExport: 'none', theme: 'system' };
+const DEFAULTS = { auto: true, autoNumber: true, autoBullet: true, autoCheck: true, shrink: true, exportToDrive: true, autoExport: 'none', theme: 'system', defaultLines: '', browserSpell: true };
 let S = { ...DEFAULTS };
 try { S = { ...DEFAULTS, ...JSON.parse(localStorage.getItem('dn-settings') || '{}') }; } catch {}
 const saveSettings = () => { try { localStorage.setItem('dn-settings', JSON.stringify(S)); } catch {} applySettings(); };
 function applySettings() {
   if (S.theme === 'system') document.documentElement.removeAttribute('data-theme'); else document.documentElement.dataset.theme = S.theme;
   const q = $('autoQuick'); q.classList.toggle('is-on', S.auto); q.querySelector('b').textContent = S.auto ? '켬' : '끔';
+  const sp = $('spellLive'); sp.classList.toggle('is-on', S.browserSpell); sp.querySelector('b').textContent = S.browserSpell ? '켬' : '끔';
+  $('editor').setAttribute('spellcheck', S.browserSpell ? 'true' : 'false');
+  updateLinesUI();
   $('convertNote').textContent = store?.kind === 'drive'
     ? (S.exportToDrive ? '바꾼 파일은 내려받기 되고, 드라이브 "에스 노트/내보내기" 폴더에도 저장돼요.' : '바꾼 파일은 이 기기에 내려받기 돼요.') + (S.autoExport !== 'none' ? ` · 자동 변환 켬(${AUTO_LABEL[S.autoExport]})` : '')
     : '바꾼 파일은 이 기기에 내려받기 돼요. 한글 파일은 .hwpx 형식이라 한글 2014 이후 버전에서 열려요.';
@@ -242,6 +245,8 @@ async function openPage(p, { keepScroll = false, silent = false, focusTitle = fa
   if (!p) { showEmpty(cur.sec ? '<h2>페이지가 없어요</h2><p>왼쪽 아래 <b>＋ 페이지 추가</b>를 눌러 첫 페이지를 만드세요.</p>' : '<h2>섹션이 없어요</h2><p><b>＋ 섹션 추가</b>로 섹션을 먼저 만드세요.</p>'); return; }
   $('empty').hidden = true; $('page').hidden = false;
   const top = $('canvas').scrollTop;
+  $('spell').hidden = true;
+  applyLines(p);
   $('pageTitle').value = p.title || '';
   $('pageDate').textContent = fmtFull(p.created);
   $('editor').innerHTML = '';
@@ -288,7 +293,7 @@ async function addSection() {
 }
 function addPage(after = cur.page, level) {
   if (!cur.sec) return;
-  const now = Date.now(), p = { id: uid(), title: '', created: now, updated: now, level: level ?? 0 };
+  const now = Date.now(), p = { id: uid(), title: '', created: now, updated: now, level: level ?? 0, ...(S.defaultLines ? { lines: S.defaultLines } : {}) };
   const i = after ? cur.sec.pages.indexOf(after) : -1;
   if (i >= 0) { let j = i + 1; if (level === undefined) { while (j < cur.sec.pages.length && cur.sec.pages[j].level) j++; } cur.sec.pages.splice(j, 0, p); }
   else cur.sec.pages.push(p);
@@ -559,6 +564,128 @@ $('btnLink').onclick = async () => {
 $('openSettings').onclick = () => settingsModal();
 $('openStorage').onclick = () => storageModal();
 $('account').onclick = () => storageModal();
+
+// ---------- 노트선 (보기 탭) ----------
+function applyLines(p) {
+  $('editor').className = 'editor' + (p && p.lines ? ' lines-' + p.lines : '');
+  updateLinesUI();
+}
+function updateLinesUI() {
+  const now = cur.page?.lines || '';
+  document.querySelectorAll('[data-lines]').forEach(b => b.classList.toggle('on', b.dataset.lines === now));
+  const d = $('linesDefault'), on = !!S.defaultLines;
+  d.classList.toggle('is-on', on);
+  d.querySelector('b').textContent = on ? { narrow: '좁은 줄', wide: '넓은 줄', grid: '모눈' }[S.defaultLines] : '끔';
+}
+document.querySelectorAll('[data-lines]').forEach(b => b.onclick = () => {
+  if (!needPage()) return;
+  if (b.dataset.lines) cur.page.lines = b.dataset.lines; else delete cur.page.lines;
+  applyLines(cur.page); scheduleIndexSave();
+});
+$('linesDefault').onclick = () => {
+  if (S.defaultLines) { S.defaultLines = ''; saveSettings(); return toast('새 페이지는 노트선 없이 만들어요.'); }
+  if (!cur.page?.lines) return toast('먼저 이 페이지의 노트선(좁은 줄·넓은 줄·모눈)을 고르세요.');
+  S.defaultLines = cur.page.lines; saveSettings();
+  toast('앞으로 새로 만드는 페이지에 이 노트선을 써요.');
+};
+
+// ---------- 맞춤법 검사 (검토 탭) ----------
+const SPELL_BLOCKS = 'p, h1, h2, h3, h4, h5, h6, li, td, th, blockquote, pre';
+const norm = t => t.replace(/ /g, ' ');
+// 블록이 직접 가진 글자 (안쪽 블록과 첨부 파일 이름은 빼고)
+function ownTextNodes(block) {
+  const ed = $('editor'), w = document.createTreeWalker(block, NodeFilter.SHOW_TEXT), out = [];
+  for (let n; (n = w.nextNode());) {
+    if (n.parentElement.closest('.att')) continue;
+    const c = n.parentElement.closest(SPELL_BLOCKS);
+    if (c === block || (!c && block === ed)) out.push(n);
+  }
+  return out;
+}
+function spellBlocks() {
+  const ed = $('editor');
+  return [ed, ...ed.querySelectorAll(SPELL_BLOCKS)]
+    .map(el => ({ el, text: norm(ownTextNodes(el).map(n => n.nodeValue).join('')) }))
+    .filter(b => b.text.trim().length > 1);
+}
+function findRange(el, needle) {
+  const nodes = ownTextNodes(el), i = norm(nodes.map(n => n.nodeValue).join('')).indexOf(needle);
+  if (i < 0 || !nodes.length) return null;
+  const at = (k, start) => {
+    let acc = 0;
+    for (const n of nodes) { const L = n.nodeValue.length; if (start ? k < acc + L : k <= acc + L) return [n, k - acc]; acc += L; }
+    const l = nodes[nodes.length - 1]; return [l, l.nodeValue.length];
+  };
+  const r = document.createRange(); r.setStart(...at(i, true)); r.setEnd(...at(i + needle.length, false));
+  return r;
+}
+function selectRange(r) { const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
+function applyFix(it) {
+  if (!it.block.el.isConnected) return false;
+  const r = findRange(it.block.el, it.wrong); if (!r) return false;
+  $('editor').focus(); selectRange(r);
+  document.execCommand('insertText', false, it.right); // Ctrl+Z로 되돌릴 수 있게
+  markDirty(); return true;
+}
+async function runSpell() {
+  if (!needPage()) return;
+  if (store?.kind !== 'drive') return toast('맞춤법 검사는 구글 드라이브로 로그인했을 때 쓸 수 있어요.');
+  if (!store.signedIn) return handleErr({ auth: true }, runSpell);
+  const blocks = spellBlocks();
+  if (!blocks.length) return toast('검사할 글이 없어요.');
+  showSpell(null);
+  // 한 번에 보내는 양을 나눠서
+  const groups = [[]]; let len = 0;
+  for (const b of blocks) {
+    if (len + b.text.length > 4500 && groups[groups.length - 1].length) { groups.push([]); len = 0; }
+    groups[groups.length - 1].push(b); len += Math.min(b.text.length, 2000);
+  }
+  const items = [];
+  try {
+    for (const g of groups) {
+      const r = await fetch('api/spellcheck', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + store.token }, body: JSON.stringify({ p: g.map(b => b.text.slice(0, 2000)) }) });
+      if (r.status === 503) { $('spell').hidden = true; return toast('맞춤법 검사 설정이 아직 안 돼 있어요. Vercel에 OPENAI_API_KEY를 넣어야 해요.', [], 10000); }
+      if (r.status === 401) { $('spell').hidden = true; return toast('이 계정은 맞춤법 검사를 쓸 수 없어요. 다시 로그인해 보세요.', [], 10000); }
+      if (r.status === 404) { $('spell').hidden = true; return toast('맞춤법 검사는 인터넷에 올린 사이트에서만 돼요.', [], 8000); }
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error('맞춤법 검사 오류: ' + (j.detail || j.error || r.status));
+      items.push(...(j.items || []).map(it => ({ ...it, block: g[it.p] })).filter(it => it.block));
+    }
+  } catch (e) { $('spell').hidden = true; return handleErr(e && e.message ? e : new Error('맞춤법 검사를 하지 못했어요.')); }
+  showSpell(items);
+}
+function showSpell(items) {
+  const el = $('spell'); el.hidden = false;
+  const head = (title, all) => `<div class="spell-head"><b>${title}</b>${all ? '<button class="all" id="spAll">모두 고치기</button>' : ''}<button id="spClose" aria-label="닫기">✕</button></div>`;
+  if (!items) {
+    el.innerHTML = head('맞춤법 검사') + '<div class="spell-empty">검사하는 중…</div>';
+    $('spClose').onclick = () => { el.hidden = true; };
+    return;
+  }
+  el.innerHTML = head(items.length ? `고칠 곳 ${items.length}개` : '맞춤법 검사', items.length > 1) +
+    `<div class="spell-list">${items.length ? items.map((it, i) => `<div class="spell-item" data-i="${i}"><div class="fix"><del>${esc(it.wrong)}</del> → <ins>${esc(it.right)}</ins></div>${it.why ? `<small>${esc(it.why)}</small>` : ''}<div class="acts"><button class="ok" data-a="fix">고치기</button><button data-a="skip">무시</button></div></div>`).join('') : '<div class="spell-empty">틀린 곳을 찾지 못했어요 👍</div>'}</div>`;
+  $('spClose').onclick = () => { el.hidden = true; };
+  const done = (box, msg) => {
+    box.classList.add('done'); box.querySelector('.acts').innerHTML = `<small>${msg}</small>`;
+    if (!el.querySelector('.spell-item:not(.done)')) el.querySelector('.spell-head b').textContent = '다 확인했어요';
+  };
+  $('spAll')?.addEventListener('click', () => {
+    let n = 0;
+    el.querySelectorAll('.spell-item:not(.done)').forEach(box => { if (applyFix(items[+box.dataset.i])) { n++; done(box, '고쳤어요'); } else done(box, '이미 바뀌어서 건너뜀'); });
+    toast(`${n}곳을 고쳤어요. 되돌리려면 Ctrl+Z를 누르세요.`);
+  });
+  el.querySelector('.spell-list').onclick = e => {
+    const box = e.target.closest('.spell-item'); if (!box || box.classList.contains('done')) return;
+    const it = items[+box.dataset.i], a = e.target.closest('[data-a]')?.dataset.a;
+    if (a === 'fix') return applyFix(it) ? done(box, '고쳤어요') : done(box, '이미 바뀌어서 건너뜀');
+    if (a === 'skip') return done(box, '무시했어요');
+    // 항목을 누르면 본문에서 그 자리를 보여 줌
+    const r = it.block.el.isConnected && findRange(it.block.el, it.wrong);
+    if (r) { it.block.el.scrollIntoView({ block: 'center', behavior: 'smooth' }); $('editor').focus(); selectRange(r); }
+  };
+}
+$('spellRun').onclick = runSpell;
+$('spellLive').onclick = () => { S.browserSpell = !S.browserSpell; saveSettings(); };
 
 // ---------- 한글·엑셀 변환 ----------
 async function pagesFor(scope, page = cur.page) {

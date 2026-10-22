@@ -30,6 +30,8 @@
 <nav class="ribbon-tabs" role="tablist">
   <button role="tab" data-tab="home" aria-selected="true">홈</button>
   <button role="tab" data-tab="insert" aria-selected="false">삽입</button>
+  <button role="tab" data-tab="view" aria-selected="false">보기</button>
+  <button role="tab" data-tab="review" aria-selected="false">검토</button>
   <button role="tab" data-tab="convert" aria-selected="false">한글·엑셀 변환</button>
   <button role="tab" data-tab="settings" aria-selected="false">설정</button>
 </nav>
@@ -79,6 +81,17 @@
     <div class="grp"><button id="btnDate">날짜</button><button id="btnTime">시간</button><button id="btnHr">구분선</button><button id="btnLink">🔗 링크</button></div>
   </div>
 
+  <div class="panel" data-panel="view" hidden>
+    <div class="grp"><span class="grp-label">노트선</span><button data-lines="" title="노트선 없음">없음</button><button data-lines="narrow" title="좁은 줄"><span class="ln-ico n"></span>좁은 줄</button><button data-lines="wide" title="넓은 줄"><span class="ln-ico w"></span>넓은 줄</button><button data-lines="grid" title="모눈"><span class="ln-ico g"></span>모눈</button></div>
+    <div class="grp"><button id="linesDefault" class="toggle" title="새로 만드는 페이지에 지금 노트선을 기본으로 씀">새 페이지에도 쓰기 <b></b></button></div>
+  </div>
+
+  <div class="panel" data-panel="review" hidden>
+    <div class="grp"><button class="big" id="spellRun">✓ 맞춤법 검사</button></div>
+    <div class="grp"><button id="spellLive" class="toggle" title="입력하는 동안 브라우저가 틀린 낱말에 빨간 밑줄을 그어요">입력할 때 빨간 밑줄 <b></b></button></div>
+    <div class="grp note">맞춤법 검사는 AI가 이 페이지의 맞춤법·띄어쓰기·문법 오류를 찾아요. 고칠지는 하나씩 고르거나 한 번에 고칠 수 있어요.</div>
+  </div>
+
   <div class="panel" data-panel="convert" hidden>
     <div class="grp"><button class="big" data-export="hwpx" data-scope="page"><span class="fi hwp">한</span>이 페이지를 한글로</button><button class="big" data-export="hwpx" data-scope="section"><span class="fi hwp">한</span>섹션 전체를 한글로</button></div>
     <div class="grp"><button class="big" data-export="xlsx" data-scope="page"><span class="fi xls">X</span>이 페이지를 엑셀로</button><button class="big" data-export="xlsx" data-scope="section"><span class="fi xls">X</span>섹션 전체를 엑셀로</button></div>
@@ -115,6 +128,7 @@
   </section>
 </main>
 
+<aside class="spell" id="spell" hidden aria-label="맞춤법 검사 결과"></aside>
 <div class="imgbar" id="imgBar" hidden><button data-w="25">25%</button><button data-w="50">50%</button><button data-w="75">75%</button><button data-w="100">원래 크기</button><button data-w="del" class="danger">삭제</button></div>
 <div class="ctx" id="ctx" hidden></div>
 <div class="toast" id="toast" role="status" hidden></div>
