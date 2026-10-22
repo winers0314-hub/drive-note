@@ -89,7 +89,7 @@ button { cursor: pointer; }
 .tlabel { display: block; text-align: center; font-size: 12px; color: var(--muted); margin-top: 6px; }
 
 /* 네 칸: 전자 필기장 · 섹션 · 페이지 · 본문 (원노트처럼) */
-.shell { flex: 1; min-height: 0; display: grid; grid-template-columns: 240px 230px 1fr; }
+.shell { flex: 1; min-height: 0; display: grid; grid-template-columns: var(--w-nb, 240px) var(--w-pages, 230px) 1fr; }
 /* 컴퓨터: 전자 필기장 아래로 섹션이 펼쳐지는 트리 (원노트 데스크톱처럼) — 섹션 칸은 숨김 */
 .shell > .col-sec { display: none; }
 #nbList { padding: 0; }
@@ -119,7 +119,13 @@ button { cursor: pointer; }
 .col-sec .nb { display: none; }
 #nbList li .nbi { width: 14px; height: 18px; border-radius: 2px 4px 4px 2px; flex: none; box-shadow: inset 3px 0 0 rgba(0, 0, 0, .18); }
 #secHead { padding-top: 12px; color: var(--ink); font-size: 13px; }
-.col { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); }
+.col { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); position: relative; }
+/* 칸 경계를 끌어서 너비 조절 (컴퓨터) */
+.resizer { position: absolute; top: 0; bottom: 0; right: -4px; width: 8px; cursor: col-resize; z-index: 5; }
+.resizer:hover, body.resizing .resizer.active { background: linear-gradient(to right, transparent 3px, var(--brand) 3px, var(--brand) 5px, transparent 5px); }
+body.resizing { cursor: col-resize; user-select: none; }
+body.resizing iframe, body.resizing .canvas { pointer-events: none; }
+@media (max-width: 1023px) { .resizer { display: none; } }
 .col-sec { background: var(--panel); }
 .col-pages { background: var(--bg); }
 .list { list-style: none; margin: 0; padding: 4px 0; overflow-y: auto; flex: 1; min-height: 0; }
@@ -282,8 +288,9 @@ body.focus .page { padding-top: 40px; }
 :root { --rule: #c7dbef; --rule-margin: #f1c1c1; }
 :root[data-theme="dark"] { --rule: #2e3d4f; --rule-margin: #4a2f2f; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --rule: #2e3d4f; --rule-margin: #4a2f2f; } }
-.editor.lines-narrow { --lh: 26px; }
-.editor.lines-wide { --lh: 34px; }
+.editor.lines-narrow { --lh: 24px; }
+.editor.lines-medium { --lh: 30px; }
+.editor.lines-wide { --lh: 38px; }
 .editor.lines-grid { --lh: 26px; }
 .editor[class*="lines-"] {
   line-height: var(--lh); min-height: max(50vh, calc(var(--lh) * 20));
@@ -348,3 +355,10 @@ body.focus .page { padding-top: 40px; }
 .on-tools span { flex: 1; font-size: 13px; color: var(--muted); }
 .on-tools .btn { padding: 4px 10px; font-size: 13px; }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
+
+.ln-ico.m { background-image: repeating-linear-gradient(to bottom, transparent 0 4px, var(--brand) 4px 5px); }
+.pop.lines-pop { display: flex; flex-direction: column; gap: 2px; padding: 6px; min-width: 120px; }
+.pop.lines-pop[hidden] { display: none; }
+.pop.lines-pop button { justify-content: flex-start; text-align: left; height: 32px; border: 0; background: transparent; border-radius: 5px; padding: 0 10px; display: flex; align-items: center; }
+.pop.lines-pop button:hover { background: var(--hover); }
+.pop.lines-pop button.on { background: var(--sel); font-weight: 600; }

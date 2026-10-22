@@ -80,11 +80,12 @@
       <button data-table="delRow">줄 삭제</button><button data-table="delCol">칸 삭제</button><button data-table="delTable">표 삭제</button>
     </div>
     <div class="grp"><button id="btnImage">🖼 그림</button><button id="btnFile">📎 파일 첨부</button></div>
-    <div class="grp"><button id="btnDate">날짜</button><button id="btnTime">시간</button><button id="btnHr">구분선</button><button id="btnLink">🔗 링크</button></div>
+    <div class="grp"><span class="drop"><button data-pop="linesPop" title="노트처럼 줄을 그어 필기해요"><span class="ln-ico m"></span>노트선 ▾</button><span class="pop lines-pop" id="linesPop" hidden><button data-lines="">없음</button><button data-lines="narrow"><span class="ln-ico n"></span>좁게</button><button data-lines="medium"><span class="ln-ico m"></span>중간</button><button data-lines="wide"><span class="ln-ico w"></span>넓게</button><button data-lines="grid"><span class="ln-ico g"></span>모눈</button></span></span></div>
+    <div class="grp"><button id="btnDate">날짜</button><button id="btnTime">시간</button><button id="btnLink">🔗 링크</button></div>
   </div>
 
   <div class="panel" data-panel="view" hidden>
-    <div class="grp"><span class="grp-label">노트선</span><button data-lines="" title="노트선 없음">없음</button><button data-lines="narrow" title="좁은 줄"><span class="ln-ico n"></span>좁은 줄</button><button data-lines="wide" title="넓은 줄"><span class="ln-ico w"></span>넓은 줄</button><button data-lines="grid" title="모눈"><span class="ln-ico g"></span>모눈</button></div>
+    <div class="grp"><span class="grp-label">노트선</span><button data-lines="">없음</button><button data-lines="narrow"><span class="ln-ico n"></span>좁게</button><button data-lines="medium"><span class="ln-ico m"></span>중간</button><button data-lines="wide"><span class="ln-ico w"></span>넓게</button><button data-lines="grid"><span class="ln-ico g"></span>모눈</button></div>
     <div class="grp"><button id="fullView" title="목록을 접고 글만 크게 봐요">⤢ 전체 페이지 보기</button><button id="focusView" title="메뉴까지 모두 숨기고 제목과 글만 봐요">⛶ 글만 보기</button></div>
     <div class="grp"><button id="nowrapBtn" class="toggle" title="줄을 바꾸지 않고 옆으로 이어 쓰고, 옆으로 스크롤해서 봐요">옆으로 길게 쓰기 <b></b></button></div>
     <div class="grp"><button id="linesDefault" class="toggle" title="새로 만드는 페이지에 지금 노트선을 기본으로 씀">새 페이지에도 쓰기 <b></b></button></div>
@@ -113,6 +114,7 @@
     <div class="col-head">전자 필기장</div>
     <ul class="list" id="nbList"></ul>
     <button class="add" id="addNotebook">＋ 전자 필기장</button>
+    <div class="resizer" data-col="nb" title="끌어서 너비 조절 (두 번 누르면 처음 너비)"></div>
   </aside>
   <aside class="col col-sec" aria-label="섹션">
     <div class="nb">
@@ -127,6 +129,7 @@
     <div class="pages-top"><button class="add-page" id="addPage">✎ 페이지 추가</button></div>
     <div class="col-head" id="pagesHead"></div>
     <ul class="list" id="pageList"></ul>
+    <div class="resizer" data-col="pages" title="끌어서 너비 조절 (두 번 누르면 처음 너비)"></div>
   </aside>
   <section class="canvas" id="canvas">
     <article class="page" id="page" hidden>

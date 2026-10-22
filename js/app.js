@@ -640,7 +640,6 @@ $('pickImage').onchange = async () => { const fs = [...$('pickImage').files]; $(
 $('pickFile').onchange = async () => { const fs = [...$('pickFile').files]; $('pickFile').value = ''; restoreRange(); for (const f of fs) await addFile(f); };
 $('btnDate').onclick = () => { if (!needPage()) return; restoreRange(); insertText(new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' })); };
 $('btnTime').onclick = () => { if (!needPage()) return; restoreRange(); insertText(new Date().toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' })); };
-$('btnHr').onclick = () => { if (!needPage()) return; restoreRange(); insertHTML('<hr><p><br></p>'); };
 $('btnLink').onclick = async () => {
   if (!needPage()) return;
   const r = savedRange && savedRange.cloneRange(), text = r ? r.toString() : '';
@@ -664,13 +663,38 @@ function updateLinesUI() {
   document.querySelectorAll('[data-lines]').forEach(b => b.classList.toggle('on', b.dataset.lines === now));
   const d = $('linesDefault'), on = !!S.defaultLines;
   d.classList.toggle('is-on', on);
-  d.querySelector('b').textContent = on ? { narrow: '좁은 줄', wide: '넓은 줄', grid: '모눈' }[S.defaultLines] : '끔';
+  d.querySelector('b').textContent = on ? { narrow: '좁게', medium: '중간', wide: '넓게', grid: '모눈' }[S.defaultLines] : '끔';
 }
 document.querySelectorAll('[data-lines]').forEach(b => b.onclick = () => {
   if (!needPage()) return;
   if (b.dataset.lines) cur.page.lines = b.dataset.lines; else delete cur.page.lines;
   applyLines(cur.page); scheduleIndexSave();
+  $('linesPop').hidden = true;
 });
+
+// ---------- 칸 너비 조절 (컴퓨터): 전자 필기장·섹션 칸과 페이지 칸의 경계를 끌어서 ----------
+const COL_DEFAULT = { nb: 240, pages: 230 };
+let colW = {};
+try { colW = JSON.parse(localStorage.getItem('dn-colw') || '{}'); } catch {}
+function applyColW() { for (const k in COL_DEFAULT) $('shell').style.setProperty('--w-' + k, (colW[k] || COL_DEFAULT[k]) + 'px'); }
+document.querySelectorAll('.resizer').forEach(r => {
+  const k = r.dataset.col;
+  r.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    const x0 = e.clientX, w0 = r.parentElement.getBoundingClientRect().width;
+    document.body.classList.add('resizing'); r.classList.add('active');
+    // 마우스가 경계선을 벗어나도 계속 따라가도록 창 전체에서 받음
+    const move = ev => { colW[k] = Math.round(Math.min(560, Math.max(150, w0 + ev.clientX - x0))); applyColW(); };
+    const up = () => {
+      removeEventListener('pointermove', move); removeEventListener('pointerup', up); removeEventListener('pointercancel', up);
+      document.body.classList.remove('resizing'); r.classList.remove('active');
+      try { localStorage.setItem('dn-colw', JSON.stringify(colW)); } catch {}
+    };
+    addEventListener('pointermove', move); addEventListener('pointerup', up); addEventListener('pointercancel', up);
+  });
+  r.addEventListener('dblclick', () => { delete colW[k]; applyColW(); try { localStorage.setItem('dn-colw', JSON.stringify(colW)); } catch {} });
+});
+applyColW();
 $('linesDefault').onclick = () => {
   if (S.defaultLines) { S.defaultLines = ''; saveSettings(); return toast('새 페이지는 노트선 없이 만들어요.'); }
   if (!cur.page?.lines) return toast('먼저 이 페이지의 노트선(좁은 줄·넓은 줄·모눈)을 고르세요.');
