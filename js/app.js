@@ -739,18 +739,68 @@ function welcome() {
 const MS_ID = (window.NOTE_CONFIG && window.NOTE_CONFIG.msClientId || '').trim();
 $('importOneNote').onclick = () => {
   if (!store || !ix) return toast('먼저 저장 위치를 고르세요.');
-  if (!MS_ID) return modal(`<h2>원노트에서 가져오기</h2><p>마이크로소프트 연결 설정이 아직 안 돼 있어요. README.md의 “원노트 가져오기 준비” 순서대로 config.js의 <b>msClientId</b>를 채우면 쓸 수 있어요.</p><div class="row"><button class="btn primary" id="onOk">확인</button></div>`, m => { m.querySelector('#onOk').onclick = closeModal; });
-  modal(`<h2>원노트에서 가져오기</h2>
-    <p>마이크로소프트 계정으로 로그인하면 원노트 전자 필기장을 골라서 에스 노트로 옮겨요. 원노트는 읽기만 해서 원래 노트는 그대로 남아요.</p>
-    <p style="font-size:12.5px">글·표·목록·할 일·그림·첨부 파일을 옮겨요. 펜으로 쓴 손글씨는 원노트가 내보내 주지 않아서 빠질 수 있어요.</p>
-    <div class="row"><button class="btn" id="onNo">취소</button><button class="btn primary" id="onGo">마이크로소프트로 로그인</button></div>`, m => {
+  modal(`<h2>원노트에서 가져오기</h2><p>원노트의 원래 노트는 바뀌지 않아요. 두 가지 방법 중에 고르세요.</p>
+    <button class="choice" id="onAcct" ${MS_ID ? '' : 'disabled'}><b>☁ 마이크로소프트 계정 연결</b><small>${MS_ID ? '개인 계정 원노트를 전자 필기장째 가져와요. 그림·첨부 파일·할 일·하위 페이지까지 옮겨져요. 학교·회사 계정은 막혀 있을 수 있어요.' : '아직 마이크로소프트 연결 설정(config.js의 msClientId)이 안 돼 있어요.'}</small></button>
+    <button class="choice" id="onWord"><b>📄 Word 파일(.docx)로 가져오기</b><small>원노트에서 섹션마다 <b>파일 → 내보내기 → 섹션 → Word 문서</b>로 저장한 파일들을 골라요. 학교 계정 노트도 돼요.</small></button>
+    <p style="font-size:12.5px">펜으로 쓴 손글씨는 원노트가 내보내 주지 않아서 빠질 수 있어요.</p>
+    <div class="row"><button class="btn" id="onNo">취소</button></div>`, m => {
     m.querySelector('#onNo').onclick = closeModal;
-    m.querySelector('#onGo').onclick = async () => {
+    m.querySelector('#onWord').onclick = wordImport;
+    m.querySelector('#onAcct').onclick = async () => {
       try { if (!msSignedIn()) await msLogin(MS_ID); } catch (e) { return toast(e.message, [], 8000); }
       pickNotebooks();
     };
   });
 };
+// Word 파일 하나 = 섹션 하나, 원노트 페이지마다 페이지 하나
+function wordImport() {
+  modal(`<h2>Word 파일로 가져오기</h2>
+    <p>원노트에서 내보낸 Word 파일(.docx)을 한 번에 여러 개 골라도 돼요. 파일 하나가 섹션 하나가 되고, 원노트 페이지마다 페이지가 하나씩 생겨요.</p>
+    <label style="display:block;margin-top:12px;font-weight:600">넣을 전자 필기장 이름<input type="text" id="wNb" value="원노트에서 가져옴"></label>
+    <div class="row"><button class="btn" id="wNo">취소</button><button class="btn primary" id="wPick">Word 파일 고르기</button></div>`, m => {
+    m.querySelector('#wNo').onclick = closeModal;
+    m.querySelector('#wPick').onclick = () => {
+      const name = m.querySelector('#wNb').value.trim() || '원노트에서 가져옴';
+      const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.docx'; inp.multiple = true;
+      inp.onchange = () => runWordImport([...inp.files].filter(f => /\.docx$/i.test(f.name)), name);
+      inp.click();
+    };
+  });
+}
+async function runWordImport(files, nbName) {
+  if (!files.length) return toast('.docx 파일을 골라 주세요.');
+  const { docxToPages } = await import('./docx-import.js');
+  $('modal').dataset.locked = '1';
+  modal(`<h2>Word 파일에서 가져오는 중</h2><div class="progress"><i id="onBar"></i></div><div class="prog-text" id="onText"></div><p style="font-size:12.5px">이 창을 닫지 마세요.</p>`);
+  const show = (k, text) => { $('onBar').style.width = Math.round(k / files.length * 100) + '%'; $('onText').textContent = text; };
+  let nb = ix.notebooks.find(n => n.name === nbName);
+  if (!nb) { nb = { id: uid(), name: nbName, sections: [] }; ix.notebooks.push(nb); }
+  let ok = 0, imgs = 0; const failed = [];
+  for (const [i, f] of files.entries()) {
+    show(i, `${i + 1} / ${files.length} · ${f.name} 읽는 중…`);
+    try {
+      const pages = await docxToPages(f, (b, n) => store.putFile(b, n), () => show(i, `${i + 1} / ${files.length} · ${f.name} · 그림 ${++imgs}개 올리는 중…`));
+      const sec = { id: uid(), name: f.name.replace(/\.docx$/i, ''), color: SECTION_COLORS[nb.sections.length % SECTION_COLORS.length], pages: [] };
+      for (const pg of pages) {
+        const when = pg.created || Date.now(), p = { id: uid(), title: pg.title, created: when, updated: when, level: 0, snip: plain(pg.html).slice(0, 80) };
+        await store.savePage(p, pg.html);
+        sec.pages.push(p); ok++;
+      }
+      nb.sections.push(sec);
+      scheduleIndexSave(); await saveIndexNow();
+    } catch (e) {
+      console.warn('Word 가져오기 실패', f.name, e);
+      if (e.auth) { failed.push(...files.slice(i).map(x => x.name)); break; }
+      failed.push(f.name);
+    }
+  }
+  scheduleIndexSave(); await saveIndexNow();
+  delete $('modal').dataset.locked; closeModal();
+  if (cur.page) leavePage(cur.page);
+  cur.nb = nb; cur.sec = nb.sections[0] || null; cur.page = null; renderAll(); openPage(cur.sec?.pages[0] || null);
+  toast(`페이지 ${ok}개를 가져와서 “${nb.name}” 전자 필기장에 넣었어요.${failed.length ? ` 가져오지 못한 파일: ${failed.join(', ')}` : ''}`, [], 12000);
+  if (failed.length && !ok) handleErr(new Error('Word 파일을 읽지 못했어요. 원노트에서 Word 문서(.docx)로 내보낸 파일인지 확인해 주세요.'));
+}
 async function pickNotebooks() {
   modal(`<h2>원노트 전자 필기장을 불러오는 중…</h2><div class="progress"><i style="width:35%"></i></div>`);
   let nbs;
