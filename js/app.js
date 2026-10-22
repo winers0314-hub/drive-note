@@ -1,0 +1,751 @@
+// 드라이브 노트 — 화면과 동작
+import { DriveStore, LocalStore, newIndex, uid, SECTION_COLORS } from './store.js';
+import { setupEditor, exec, formatBlock, fontSize, insertHTML, insertText, toggleChecklist, tableHTML, tableOp, addFile, caretIn, hideImgBar, sizeText } from './editor.js';
+import { sanitize, parseHTML, toLines } from './doc.js';
+import { toHwpx } from './hwpx.js';
+import { toXlsx } from './xlsx.js';
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const CLIENT_ID = (window.NOTE_CONFIG && window.NOTE_CONFIG.googleClientId || '').trim();
+const narrow = () => matchMedia('(max-width: 820px)').matches;
+
+// ---------- 설정 (이 기기에 저장) ----------
+const DEFAULTS = { auto: true, autoNumber: true, autoBullet: true, autoCheck: true, shrink: true, exportToDrive: true, autoExport: 'none', theme: 'system' };
+let S = { ...DEFAULTS };
+try { S = { ...DEFAULTS, ...JSON.parse(localStorage.getItem('dn-settings') || '{}') }; } catch {}
+const saveSettings = () => { try { localStorage.setItem('dn-settings', JSON.stringify(S)); } catch {} applySettings(); };
+function applySettings() {
+  if (S.theme === 'system') document.documentElement.removeAttribute('data-theme'); else document.documentElement.dataset.theme = S.theme;
+  const q = $('autoQuick'); q.classList.toggle('is-on', S.auto); q.querySelector('b').textContent = S.auto ? '켬' : '끔';
+  $('convertNote').textContent = store?.kind === 'drive'
+    ? (S.exportToDrive ? '바꾼 파일은 내려받기 되고, 드라이브 "드라이브 노트/내보내기" 폴더에도 저장돼요.' : '바꾼 파일은 이 기기에 내려받기 돼요.') + (S.autoExport !== 'none' ? ` · 자동 변환 켬(${AUTO_LABEL[S.autoExport]})` : '')
+    : '바꾼 파일은 이 기기에 내려받기 돼요. 한글 파일은 .hwpx 형식이라 한글 2014 이후 버전에서 열려요.';
+}
+const AUTO_LABEL = { none: '안 함', hwpx: '한글', xlsx: '엑셀', both: '한글+엑셀' };
+
+// ---------- 상태 ----------
+let store = null, ix = null;
+let cur = { nb: null, sec: null, page: null };
+let dirty = false, editedSinceOpen = false, saveTimer = 0, indexTimer = 0, saving = Promise.resolve(), indexPending = false;
+let searchMode = null; // {q, ids}
+const imgURL = new Map(); // fid → blob URL
+
+const allSections = () => ix.notebooks.flatMap(nb => nb.sections.map(sec => ({ nb, sec })));
+const allPages = () => allSections().flatMap(({ nb, sec }) => sec.pages.map(p => ({ nb, sec, p })));
+const findPage = id => allPages().find(x => x.p.id === id);
+function remember() { try { localStorage.setItem('dn-last', JSON.stringify({ nb: cur.nb?.id, sec: cur.sec?.id, page: cur.page?.id })); } catch {} }
+
+// ---------- 상태 표시·알림 ----------
+function status(kind, text) {
+  const m = { ok: '✓ 저장됨', saving: '저장 중…', edit: '편집 중', offline: '⚠ 오프라인 · 연결되면 저장', auth: '⚠ 다시 로그인 필요', err: '⚠ 저장 실패' };
+  $('sync').textContent = text || m[kind] || '';
+  $('sync').title = store?.kind === 'drive' ? '구글 드라이브에 저장' : '이 기기에만 저장';
+}
+let toastTimer = 0;
+function toast(msg, actions = [], ms = 4000) {
+  const t = $('toast');
+  t.innerHTML = `<span>${esc(msg)}</span>` + actions.map((a, i) => `<button data-i="${i}">${esc(a.label)}</button>`).join('');
+  t.hidden = false;
+  t.onclick = e => { const b = e.target.closest('button'); if (!b) return; t.hidden = true; actions[+b.dataset.i].run(); };
+  clearTimeout(toastTimer); if (ms) toastTimer = setTimeout(() => { t.hidden = true; }, ms);
+}
+function modal(html, onReady) {
+  $('modal').innerHTML = html; $('modal').hidden = false; $('shade').hidden = false;
+  onReady?.($('modal'));
+  const f = $('modal').querySelector('[autofocus]'); if (f) f.focus();
+}
+function closeModal() { $('modal').hidden = true; $('shade').hidden = true; $('modal').innerHTML = ''; }
+$('shade').onclick = () => { if (!$('modal').dataset.locked) closeModal(); };
+const ask = (title, label, value = '') => new Promise(res => {
+  modal(`<h2>${esc(title)}</h2><input type="text" id="askIn" value="${esc(value)}" placeholder="${esc(label)}" autofocus><div class="row"><button class="btn" id="askNo">취소</button><button class="btn primary" id="askOk">확인</button></div>`, m => {
+    const ok = () => { const v = m.querySelector('#askIn').value.trim(); closeModal(); res(v || null); };
+    m.querySelector('#askOk').onclick = ok; m.querySelector('#askNo').onclick = () => { closeModal(); res(null); };
+    m.querySelector('#askIn').onkeydown = e => { if (e.key === 'Enter') ok(); };
+    setTimeout(() => m.querySelector('#askIn').select(), 0);
+  });
+});
+const confirmBox = (title, body, yes = '삭제', danger = true) => new Promise(res => {
+  modal(`<h2>${esc(title)}</h2><p>${body}</p><div class="row"><button class="btn" id="cNo">취소</button><button class="btn ${danger ? 'danger' : 'primary'}" id="cYes">${esc(yes)}</button></div>`, m => {
+    m.querySelector('#cYes').onclick = () => { closeModal(); res(true); };
+    m.querySelector('#cNo').onclick = () => { closeModal(); res(false); };
+  });
+});
+
+// ---------- 오류 처리 ----------
+function handleErr(e, retry) {
+  console.error(e);
+  if (e.auth) {
+    status('auth');
+    toast('구글 로그인이 만료됐어요. 다시 로그인하면 이어서 저장해요.', [{ label: '로그인', run: async () => { try { await store.signIn(); status('ok'); retry?.(); } catch (er) { toast(er.message); } } }], 0);
+  } else if (e.offline) { status('offline'); setTimeout(() => retry?.(), 15000); }
+  else { status('err'); toast(e.message || '저장하지 못했어요.', retry ? [{ label: '다시 시도', run: retry }] : [], 8000); }
+}
+addEventListener('online', () => { if (dirty) savePageNow(); if (indexPending) saveIndexNow(); });
+
+// ---------- 저장 ----------
+function scheduleIndexSave() { indexPending = true; clearTimeout(indexTimer); indexTimer = setTimeout(saveIndexNow, 700); }
+function saveIndexNow() {
+  clearTimeout(indexTimer);
+  if (!indexPending) return saving;
+  indexPending = false; ix.updated = Date.now();
+  const snapshot = JSON.parse(JSON.stringify(ix));
+  saving = saving.then(async () => {
+    try { status('saving'); await store.saveIndex(snapshot); if (!dirty) status('ok'); }
+    catch (e) { indexPending = true; handleErr(e, saveIndexNow); }
+  });
+  return saving;
+}
+function serialize() {
+  const c = $('editor').cloneNode(true);
+  c.querySelectorAll('img[data-fid]').forEach(i => i.removeAttribute('src'));
+  c.querySelectorAll('.sel').forEach(i => i.classList.remove('sel'));
+  return c.innerHTML;
+}
+function plain(html) { return toLines(parseHTML(html)).lines.join(' ').replace(/\s+/g, ' ').trim(); }
+function markDirty() {
+  if (!cur.page) return;
+  dirty = true; editedSinceOpen = true; status('edit');
+  clearTimeout(saveTimer); saveTimer = setTimeout(savePageNow, 1200);
+  saveDraftSoon();
+}
+let draftTimer = 0;
+function saveDraftSoon() {
+  clearTimeout(draftTimer);
+  const p = cur.page;
+  draftTimer = setTimeout(() => { try { localStorage.setItem('dn-draft-' + p.id, JSON.stringify({ t: Date.now(), title: $('pageTitle').value, html: serialize() })); } catch {} }, 400);
+}
+function savePageNow() {
+  clearTimeout(saveTimer);
+  if (!dirty || !cur.page) return saving;
+  const p = cur.page, html = serialize(), at = Date.now();
+  dirty = false;
+  p.title = $('pageTitle').value.trim(); p.updated = at; p.snip = plain(html).slice(0, 80);
+  renderPages();
+  saving = saving.then(async () => {
+    try {
+      status('saving');
+      await store.savePage(p, html);
+      try { const d = JSON.parse(localStorage.getItem('dn-draft-' + p.id) || 'null'); if (d && d.t <= at + 500) localStorage.removeItem('dn-draft-' + p.id); } catch {}
+      scheduleIndexSave();
+      if (!dirty) status('ok');
+    } catch (e) { if (cur.page === p) dirty = true; handleErr(e, () => { if (cur.page === p) { dirty = true; savePageNow(); } }); }
+  });
+  return saving;
+}
+async function flush() { savePageNow(); saveIndexNow(); await saving; }
+addEventListener('beforeunload', e => { if (dirty || indexPending) { savePageNow(); saveIndexNow(); e.preventDefault(); e.returnValue = ''; } });
+addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); flush(); } });
+
+// ---------- 다른 기기에서 바뀐 것 반영 ----------
+let lastCheck = 0;
+async function checkRemote() {
+  if (!store || store.kind !== 'drive' || !store.signedIn || Date.now() - lastCheck < 5000 || indexPending) return;
+  lastCheck = Date.now();
+  try {
+    if (!(await store.remoteChanged())) return;
+    const fresh = await store.loadIndex();
+    if (!fresh || indexPending) return;
+    const before = cur.page ? { id: cur.page.id, updated: cur.page.updated } : null;
+    ix = fresh; reselect(cur.nb?.id, cur.sec?.id, cur.page?.id);
+    renderAll();
+    if (before && cur.page && cur.page.id === before.id && cur.page.updated > before.updated && !dirty) await openPage(cur.page, { keepScroll: true, silent: true });
+    toast('다른 기기에서 바뀐 내용을 불러왔어요.');
+  } catch (e) { if (!e.offline) console.warn(e); }
+}
+addEventListener('focus', checkRemote);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkRemote(); else flush(); });
+
+// ---------- 그림·파일 ----------
+async function fileURL(fid) {
+  if (imgURL.has(fid)) return imgURL.get(fid);
+  const b = await store.getFile(fid); if (!b) return '';
+  const u = URL.createObjectURL(b); imgURL.set(fid, u); return u;
+}
+async function shrink(file) {
+  if (!S.shrink || file.type === 'image/gif') return file;
+  try {
+    const bmp = await createImageBitmap(file), max = 1600;
+    if (bmp.width <= max && bmp.height <= max && file.size < 1.5e6) return file;
+    const k = Math.min(1, max / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas'); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+    const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(bmp, 0, 0, c.width, c.height);
+    const b = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.85));
+    return b && b.size < file.size ? new File([b], file.name.replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' }) : file;
+  } catch { return file; }
+}
+async function upload(file, isImage) {
+  try {
+    const f = isImage ? await shrink(file) : file;
+    toast(`${isImage ? '그림' : '파일'} 올리는 중… (${sizeText(f.size)})`, [], 0);
+    const fid = await store.putFile(f, f.name || (isImage ? 'image.jpg' : 'file'));
+    const url = URL.createObjectURL(f); imgURL.set(fid, url);
+    $('toast').hidden = true;
+    return { fid, url };
+  } catch (e) { $('toast').hidden = true; handleErr(e); return null; }
+}
+async function openFile(fid, name) {
+  try {
+    toast('파일 여는 중…', [], 0);
+    const b = await store.getFile(fid); $('toast').hidden = true;
+    if (!b) return toast('파일을 찾지 못했어요.');
+    download(b, name || 'file');
+  } catch (e) { $('toast').hidden = true; handleErr(e); }
+}
+function download(blob, name) {
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+}
+
+// ---------- 그리기 ----------
+function reselect(nbId, secId, pageId) {
+  cur.nb = ix.notebooks.find(n => n.id === nbId) || ix.notebooks[0] || null;
+  cur.sec = cur.nb ? (cur.nb.sections.find(s => s.id === secId) || cur.nb.sections[0] || null) : null;
+  cur.page = cur.sec ? (cur.sec.pages.find(p => p.id === pageId) || null) : null;
+}
+function renderAll() { renderNotebook(); renderSections(); renderPages(); }
+function renderNotebook() { $('nbName').textContent = cur.nb ? cur.nb.name : '전자 필기장 없음'; }
+function renderSections() {
+  const ul = $('sectionList');
+  ul.innerHTML = (cur.nb?.sections || []).map(s => `<li data-id="${s.id}" class="${s === cur.sec ? 'on' : ''}" draggable="true" style="border-left-color:${s.color}"><span class="dot" style="background:${s.color}"></span><span class="name">${esc(s.name)}</span><button class="more" data-more="sec" aria-label="섹션 메뉴">⋯</button></li>`).join('');
+}
+const fmtDate = t => t ? new Date(t).toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' }) : '';
+const fmtFull = t => t ? new Date(t).toLocaleString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long', hour: 'numeric', minute: '2-digit' }) : '';
+function renderPages() {
+  const ul = $('pageList'), head = $('pagesHead');
+  if (searchMode) {
+    const hits = searchMode.ids.map(findPage).filter(Boolean);
+    head.innerHTML = `<span>검색 결과 ${hits.length}개 · “${esc(searchMode.q)}”</span><button id="endSearch">닫기</button>`;
+    $('endSearch').onclick = endSearch;
+    ul.innerHTML = hits.map(({ sec, p }) => `<li data-id="${p.id}" class="${p === cur.page ? 'on' : ''}"><div class="row"><span class="name">${esc(p.title || '제목 없음')}</span></div><span class="snip">${esc(sec.name)} · ${esc(p.snip || '')}</span></li>`).join('') || '<li class="none"><span class="snip">찾는 내용이 없어요.</span></li>';
+    $('addPage').hidden = true;
+    return;
+  }
+  $('addPage').hidden = !cur.sec;
+  head.innerHTML = cur.sec ? `<span style="color:${cur.sec.color}">■</span><span>${esc(cur.sec.name)}</span>` : '';
+  ul.innerHTML = (cur.sec?.pages || []).map(p => `<li data-id="${p.id}" class="${p === cur.page ? 'on' : ''}${p.level ? ' sub' : ''}" draggable="true"><div class="row"><span class="name">${esc(p.title || '제목 없음')}</span><button class="more" data-more="page" aria-label="페이지 메뉴">⋯</button></div><span class="date">${fmtDate(p.updated || p.created)}</span></li>`).join('');
+}
+function showEmpty(html) { $('page').hidden = true; $('empty').hidden = false; $('empty').innerHTML = html; }
+function setView(v) {
+  $('shell').dataset.view = v;
+  $('navBack').hidden = !narrow() || v === 'sections';
+}
+$('navBack').onclick = () => setView($('shell').dataset.view === 'page' ? 'pages' : 'sections');
+
+// ---------- 페이지 열기 ----------
+async function openPage(p, { keepScroll = false, silent = false, focusTitle = false } = {}) {
+  if (cur.page && cur.page !== p) { leavePage(cur.page); }
+  else if (dirty) savePageNow();
+  hideImgBar();
+  cur.page = p; remember(); renderPages();
+  if (!p) { showEmpty(cur.sec ? '<h2>페이지가 없어요</h2><p>왼쪽 아래 <b>＋ 페이지 추가</b>를 눌러 첫 페이지를 만드세요.</p>' : '<h2>섹션이 없어요</h2><p><b>＋ 섹션 추가</b>로 섹션을 먼저 만드세요.</p>'); return; }
+  $('empty').hidden = true; $('page').hidden = false;
+  const top = $('canvas').scrollTop;
+  $('pageTitle').value = p.title || '';
+  $('pageDate').textContent = fmtFull(p.created);
+  $('editor').innerHTML = '';
+  if (!silent) status('', '불러오는 중…');
+  let html = '';
+  try { html = await store.loadPage(p); }
+  catch (e) { handleErr(e, () => openPage(p)); return; }
+  if (cur.page !== p) return;
+  // 저장되지 않은 임시 내용이 있으면 되살리기 제안
+  let draft = null; try { draft = JSON.parse(localStorage.getItem('dn-draft-' + p.id) || 'null'); } catch {}
+  $('editor').innerHTML = sanitize(html) || '<p><br></p>';
+  dirty = false; editedSinceOpen = false;
+  status('ok');
+  hydrate();
+  if (draft && draft.t > (p.updated || 0) + 1000 && draft.html !== html) {
+    toast('저장되지 않은 내용이 있어요.', [{ label: '되살리기', run: () => { $('editor').innerHTML = sanitize(draft.html); if (draft.title) $('pageTitle').value = draft.title; hydrate(); markDirty(); } }, { label: '버리기', run: () => localStorage.removeItem('dn-draft-' + p.id) }], 0);
+  }
+  if (keepScroll) $('canvas').scrollTop = top; else $('canvas').scrollTop = 0;
+  if (narrow()) setView('page');
+  if (focusTitle) { $('pageTitle').focus(); }
+}
+function hydrate() {
+  $('editor').querySelectorAll('img[data-fid]').forEach(async img => { const u = await fileURL(img.dataset.fid).catch(() => ''); if (u) img.src = u; else img.alt = '그림을 불러오지 못했어요'; });
+}
+function leavePage(p) {
+  savePageNow();
+  if (editedSinceOpen && S.autoExport !== 'none' && store.kind === 'drive') autoExport(p);
+  editedSinceOpen = false;
+}
+
+// ---------- 전자 필기장 · 섹션 · 페이지 ----------
+function selectSection(sec) {
+  if (cur.page) leavePage(cur.page);
+  cur.sec = sec; cur.page = null; searchMode = null; $('search').value = '';
+  renderSections(); renderPages();
+  const first = sec?.pages[0] || null;
+  openPage(first);
+  if (narrow()) setView('pages');
+}
+async function addSection() {
+  const name = await ask('새 섹션', '섹션 이름', '새 섹션'); if (!name) return;
+  const sec = { id: uid(), name, color: SECTION_COLORS[cur.nb.sections.length % SECTION_COLORS.length], pages: [] };
+  cur.nb.sections.push(sec); scheduleIndexSave(); selectSection(sec);
+}
+function addPage(after = cur.page, level) {
+  if (!cur.sec) return;
+  const now = Date.now(), p = { id: uid(), title: '', created: now, updated: now, level: level ?? 0 };
+  const i = after ? cur.sec.pages.indexOf(after) : -1;
+  if (i >= 0) { let j = i + 1; if (level === undefined) { while (j < cur.sec.pages.length && cur.sec.pages[j].level) j++; } cur.sec.pages.splice(j, 0, p); }
+  else cur.sec.pages.push(p);
+  searchMode = null;
+  scheduleIndexSave();
+  openPage(p, { focusTitle: true });
+}
+async function addNotebook() {
+  const name = await ask('새 전자 필기장', '전자 필기장 이름', '새 전자 필기장'); if (!name) return;
+  const nb = { id: uid(), name, sections: [{ id: uid(), name: '새 섹션', color: SECTION_COLORS[1], pages: [] }] };
+  ix.notebooks.push(nb); scheduleIndexSave();
+  if (cur.page) leavePage(cur.page);
+  cur.nb = nb; cur.sec = nb.sections[0]; cur.page = null; renderAll(); openPage(null);
+}
+async function trashPages(pages) {
+  for (const p of pages) { try { await store.deletePage(p); } catch (e) { console.warn(e); } localStorage.removeItem('dn-draft-' + p.id); }
+}
+const trashNote = () => store.kind === 'drive' ? ' 드라이브 휴지통으로 옮겨져서 30일 안에는 되살릴 수 있어요.' : ' 되살릴 수 없어요.';
+
+// 목록 클릭
+$('sectionList').addEventListener('click', e => {
+  const li = e.target.closest('li[data-id]'); if (!li) return;
+  const sec = cur.nb.sections.find(s => s.id === li.dataset.id);
+  if (e.target.closest('[data-more]')) { e.stopPropagation(); sectionMenu(sec, e.target.closest('[data-more]')); return; }
+  if (sec !== cur.sec) selectSection(sec); else if (narrow()) setView('pages');
+});
+$('pageList').addEventListener('click', e => {
+  const li = e.target.closest('li[data-id]'); if (!li) return;
+  const hit = findPage(li.dataset.id); if (!hit) return;
+  if (e.target.closest('[data-more]')) { e.stopPropagation(); pageMenu(hit.p, e.target.closest('[data-more]')); return; }
+  if (searchMode && (hit.sec !== cur.sec)) { if (cur.page) leavePage(cur.page); cur.nb = hit.nb; cur.sec = hit.sec; cur.page = null; renderNotebook(); renderSections(); }
+  if (hit.p !== cur.page) openPage(hit.p); else if (narrow()) setView('page');
+});
+['sectionList', 'pageList'].forEach(id => $(id).addEventListener('contextmenu', e => {
+  const li = e.target.closest('li[data-id]'); if (!li) return; e.preventDefault();
+  if (id === 'sectionList') sectionMenu(cur.nb.sections.find(s => s.id === li.dataset.id), { x: e.clientX, y: e.clientY });
+  else { const h = findPage(li.dataset.id); if (h) pageMenu(h.p, { x: e.clientX, y: e.clientY }); }
+}));
+$('addSection').onclick = () => cur.nb && addSection();
+$('addPage').onclick = () => addPage(null);
+$('pageTitle').addEventListener('input', () => { if (cur.page) { cur.page.title = $('pageTitle').value; const li = $('pageList').querySelector(`li[data-id="${cur.page.id}"] .name`); if (li) li.textContent = cur.page.title || '제목 없음'; markDirty(); } });
+$('pageTitle').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); const ed = $('editor'); ed.focus(); const r = document.createRange(); r.selectNodeContents(ed); r.collapse(true); getSelection().removeAllRanges(); getSelection().addRange(r); } });
+
+// 메뉴
+function showCtx(html, at) {
+  const c = $('ctx'); c.innerHTML = html; c.hidden = false;
+  const r = at.getBoundingClientRect ? at.getBoundingClientRect() : { left: at.x, bottom: at.y, top: at.y };
+  const w = c.offsetWidth, h = c.offsetHeight;
+  c.style.left = Math.max(8, Math.min(innerWidth - w - 8, r.left)) + 'px';
+  c.style.top = (r.bottom + h + 8 > innerHeight ? Math.max(8, r.top - h - 4) : r.bottom + 4) + 'px';
+  return c;
+}
+document.addEventListener('mousedown', e => {
+  if (!$('ctx').hidden && !e.target.closest('#ctx')) $('ctx').hidden = true;
+  if (!$('nbMenu').hidden && !e.target.closest('.nb')) $('nbMenu').hidden = true;
+  if (!e.target.closest('.drop')) document.querySelectorAll('.pop').forEach(p => { p.hidden = true; });
+});
+function sectionMenu(sec, at) {
+  const i = cur.nb.sections.indexOf(sec);
+  const c = showCtx(`<button data-a="rename">이름 바꾸기</button><div class="colors">${SECTION_COLORS.map(col => `<button data-color="${col}" style="background:${col}" aria-label="색"></button>`).join('')}</div><hr>
+    <button data-a="up" ${i ? '' : 'disabled'}>위로</button><button data-a="down" ${i < cur.nb.sections.length - 1 ? '' : 'disabled'}>아래로</button>
+    <button data-a="move">다른 전자 필기장으로 옮기기</button><hr><button data-a="del" class="danger">섹션 삭제</button>`, at);
+  c.onclick = async e => {
+    const b = e.target.closest('button'); if (!b) return; c.hidden = true;
+    if (b.dataset.color) { sec.color = b.dataset.color; }
+    else if (b.dataset.a === 'rename') { const n = await ask('섹션 이름 바꾸기', '섹션 이름', sec.name); if (!n) return; sec.name = n; }
+    else if (b.dataset.a === 'up' || b.dataset.a === 'down') { const j = i + (b.dataset.a === 'up' ? -1 : 1); cur.nb.sections.splice(i, 1); cur.nb.sections.splice(j, 0, sec); }
+    else if (b.dataset.a === 'move') { const to = await pickNotebook(cur.nb); if (!to) return; cur.nb.sections.splice(cur.nb.sections.indexOf(sec), 1); to.sections.push(sec); if (cur.sec === sec) { cur.nb = to; renderNotebook(); } }
+    else if (b.dataset.a === 'del') {
+      if (!(await confirmBox(`“${sec.name}” 섹션 삭제`, `이 섹션의 페이지 ${sec.pages.length}개도 함께 지워져요.${trashNote()}`))) return;
+      cur.nb.sections.splice(cur.nb.sections.indexOf(sec), 1);
+      if (cur.sec === sec) { dirty = false; cur.page = null; cur.sec = cur.nb.sections[0] || null; openPage(cur.sec?.pages[0] || null); }
+      trashPages(sec.pages);
+    }
+    scheduleIndexSave(); renderSections(); renderPages();
+  };
+}
+function pageMenu(p, at) {
+  const sec = cur.sec.pages.includes(p) ? cur.sec : findPage(p.id).sec, i = sec.pages.indexOf(p);
+  const c = showCtx(`<button data-a="sub">${p.level ? '하위 페이지 해제' : '하위 페이지로 만들기'}</button><button data-a="child">아래에 하위 페이지 추가</button>
+    <button data-a="up" ${i ? '' : 'disabled'}>위로</button><button data-a="down" ${i < sec.pages.length - 1 ? '' : 'disabled'}>아래로</button>
+    <button data-a="move">다른 섹션으로 옮기기</button><button data-a="copy">복사본 만들기</button><hr><button data-a="del" class="danger">페이지 삭제</button>`, at);
+  c.onclick = async e => {
+    const b = e.target.closest('button'); if (!b) return; c.hidden = true;
+    const a = b.dataset.a;
+    if (a === 'sub') p.level = p.level ? 0 : 1;
+    else if (a === 'child') { addPage(p, 1); return; }
+    else if (a === 'up' || a === 'down') { sec.pages.splice(i, 1); sec.pages.splice(i + (a === 'up' ? -1 : 1), 0, p); }
+    else if (a === 'move') {
+      const to = await pickSection(sec); if (!to) return;
+      if (p === cur.page) savePageNow();
+      sec.pages.splice(sec.pages.indexOf(p), 1); p.level = 0; to.pages.push(p);
+      if (p === cur.page) openPage(sec.pages[0] || null);
+    }
+    else if (a === 'copy') {
+      if (p === cur.page) await flush();
+      const html = p === cur.page ? serialize() : await store.loadPage(p).catch(() => '');
+      const now = Date.now(), np = { id: uid(), title: (p.title || '제목 없음') + ' (복사본)', created: now, updated: now, level: p.level, snip: p.snip };
+      sec.pages.splice(i + 1, 0, np);
+      try { await store.savePage(np, html); } catch (er) { handleErr(er); }
+    }
+    else if (a === 'del') {
+      if (!(await confirmBox(`“${p.title || '제목 없음'}” 페이지 삭제`, `이 페이지를 지울까요?${trashNote()}`))) return;
+      sec.pages.splice(sec.pages.indexOf(p), 1);
+      if (p === cur.page) { dirty = false; editedSinceOpen = false; cur.page = null; openPage(sec.pages[Math.min(i, sec.pages.length - 1)] || null); }
+      trashPages([p]);
+    }
+    scheduleIndexSave(); renderPages();
+  };
+}
+function pickSection(from) {
+  return new Promise(res => {
+    const opts = allSections().filter(x => x.sec !== from);
+    if (!opts.length) { toast('옮길 다른 섹션이 없어요.'); return res(null); }
+    modal(`<h2>어느 섹션으로 옮길까요?</h2>${opts.map((x, k) => `<button class="choice" data-k="${k}"><b><span style="color:${x.sec.color}">■</span> ${esc(x.sec.name)}</b><small>${esc(x.nb.name)}</small></button>`).join('')}<div class="row"><button class="btn" id="pNo">취소</button></div>`, m => {
+      m.onclick = e => { const b = e.target.closest('[data-k]'); if (b) { closeModal(); res(opts[+b.dataset.k].sec); } else if (e.target.id === 'pNo') { closeModal(); res(null); } };
+    });
+  });
+}
+function pickNotebook(from) {
+  return new Promise(res => {
+    const opts = ix.notebooks.filter(n => n !== from);
+    if (!opts.length) { toast('다른 전자 필기장이 없어요. 먼저 새 전자 필기장을 만드세요.'); return res(null); }
+    modal(`<h2>어느 전자 필기장으로 옮길까요?</h2>${opts.map((n, k) => `<button class="choice" data-k="${k}"><b>${esc(n.name)}</b><small>섹션 ${n.sections.length}개</small></button>`).join('')}<div class="row"><button class="btn" id="pNo">취소</button></div>`, m => {
+      m.onclick = e => { const b = e.target.closest('[data-k]'); if (b) { closeModal(); res(opts[+b.dataset.k]); } else if (e.target.id === 'pNo') { closeModal(); res(null); } };
+    });
+  });
+}
+
+// 전자 필기장 메뉴
+$('nbBtn').onclick = () => {
+  const m = $('nbMenu');
+  if (!m.hidden) { m.hidden = true; return; }
+  m.innerHTML = ix.notebooks.map(n => `<button data-nb="${n.id}" class="${n === cur.nb ? 'on' : ''}">▤ ${esc(n.name)}</button>`).join('') +
+    `<hr><button data-a="new">＋ 새 전자 필기장</button><button data-a="rename">이 전자 필기장 이름 바꾸기</button><button data-a="del" class="danger">이 전자 필기장 삭제</button>`;
+  m.hidden = false;
+};
+$('nbMenu').onclick = async e => {
+  const b = e.target.closest('button'); if (!b) return; $('nbMenu').hidden = true;
+  if (b.dataset.nb) {
+    const nb = ix.notebooks.find(n => n.id === b.dataset.nb); if (nb === cur.nb) return;
+    if (cur.page) leavePage(cur.page);
+    cur.nb = nb; cur.sec = nb.sections[0] || null; cur.page = null; searchMode = null; renderAll(); openPage(cur.sec?.pages[0] || null);
+    if (narrow()) setView('sections');
+  } else if (b.dataset.a === 'new') addNotebook();
+  else if (b.dataset.a === 'rename') { const n = await ask('전자 필기장 이름 바꾸기', '이름', cur.nb.name); if (n) { cur.nb.name = n; scheduleIndexSave(); renderNotebook(); } }
+  else if (b.dataset.a === 'del') {
+    if (ix.notebooks.length <= 1) return toast('전자 필기장이 하나뿐이라 지울 수 없어요.');
+    const pages = cur.nb.sections.flatMap(s => s.pages);
+    if (!(await confirmBox(`“${cur.nb.name}” 전자 필기장 삭제`, `섹션 ${cur.nb.sections.length}개, 페이지 ${pages.length}개가 함께 지워져요.${trashNote()}`))) return;
+    dirty = false; editedSinceOpen = false;
+    ix.notebooks.splice(ix.notebooks.indexOf(cur.nb), 1);
+    cur.nb = ix.notebooks[0]; cur.sec = cur.nb.sections[0] || null; cur.page = null;
+    scheduleIndexSave(); renderAll(); openPage(cur.sec?.pages[0] || null); trashPages(pages);
+  }
+};
+
+// 끌어서 순서 바꾸기 · 페이지를 섹션으로 옮기기
+let dragItem = null;
+['sectionList', 'pageList'].forEach(id => {
+  const ul = $(id);
+  ul.addEventListener('dragstart', e => { const li = e.target.closest('li[data-id]'); if (!li || searchMode) return e.preventDefault(); dragItem = { kind: id, id: li.dataset.id }; e.dataTransfer.effectAllowed = 'move'; });
+  ul.addEventListener('dragover', e => {
+    const li = e.target.closest('li[data-id]'); if (!dragItem || !li) return;
+    e.preventDefault(); ul.querySelectorAll('.drop-before, .drop-into').forEach(x => x.classList.remove('drop-before', 'drop-into'));
+    li.classList.add(dragItem.kind === 'pageList' && id === 'sectionList' ? 'drop-into' : 'drop-before');
+  });
+  ul.addEventListener('dragleave', e => { const li = e.target.closest('li'); if (li) li.classList.remove('drop-before', 'drop-into'); });
+  ul.addEventListener('drop', e => {
+    const li = e.target.closest('li[data-id]'); if (!dragItem || !li) return; e.preventDefault();
+    li.classList.remove('drop-before', 'drop-into');
+    if (dragItem.kind === 'sectionList' && id === 'sectionList') {
+      const a = cur.nb.sections.findIndex(s => s.id === dragItem.id), sec = cur.nb.sections[a]; if (!sec || sec.id === li.dataset.id) return;
+      cur.nb.sections.splice(a, 1); cur.nb.sections.splice(cur.nb.sections.findIndex(s => s.id === li.dataset.id), 0, sec); renderSections();
+    } else if (dragItem.kind === 'pageList' && id === 'pageList') {
+      const a = cur.sec.pages.findIndex(p => p.id === dragItem.id), p = cur.sec.pages[a]; if (!p || p.id === li.dataset.id) return;
+      cur.sec.pages.splice(a, 1); cur.sec.pages.splice(cur.sec.pages.findIndex(x => x.id === li.dataset.id), 0, p); renderPages();
+    } else if (dragItem.kind === 'pageList' && id === 'sectionList') {
+      const to = cur.nb.sections.find(s => s.id === li.dataset.id); if (!to || to === cur.sec) return;
+      const p = cur.sec.pages.find(x => x.id === dragItem.id); if (!p) return;
+      if (p === cur.page) { savePageNow(); }
+      cur.sec.pages.splice(cur.sec.pages.indexOf(p), 1); p.level = 0; to.pages.push(p);
+      if (p === cur.page) openPage(cur.sec.pages[0] || null); else renderPages();
+      toast(`“${p.title || '제목 없음'}”을(를) ${to.name} 섹션으로 옮겼어요.`);
+    }
+    dragItem = null; scheduleIndexSave();
+  });
+  ul.addEventListener('dragend', () => { dragItem = null; document.querySelectorAll('.drop-before, .drop-into').forEach(x => x.classList.remove('drop-before', 'drop-into')); });
+});
+
+// ---------- 검색 ----------
+let searchTimer = 0;
+$('search').addEventListener('input', () => { clearTimeout(searchTimer); const q = $('search').value.trim(); if (!q) return endSearch(); searchTimer = setTimeout(() => runSearch(q), 450); });
+$('search').addEventListener('keydown', e => { if (e.key === 'Escape') { $('search').value = ''; endSearch(); } if (e.key === 'Enter') { clearTimeout(searchTimer); const q = $('search').value.trim(); if (q) runSearch(q); } });
+async function runSearch(q) {
+  await flush().catch(() => {});
+  const k = q.toLowerCase(), list = allPages();
+  const byTitle = list.filter(x => (x.p.title || '').toLowerCase().includes(k) || (x.p.snip || '').toLowerCase().includes(k)).map(x => x.p.id);
+  searchMode = { q, ids: byTitle }; renderPages(); if (narrow()) setView('pages');
+  try {
+    const more = await store.search(q, list.map(x => x.p));
+    if (searchMode?.q !== q) return;
+    searchMode.ids = [...new Set([...byTitle, ...more])]; renderPages();
+  } catch (e) { if (!e.offline) handleErr(e); }
+}
+function endSearch() { searchMode = null; renderPages(); }
+
+// ---------- 리본 ----------
+document.querySelectorAll('.ribbon-tabs button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.ribbon-tabs button').forEach(x => x.setAttribute('aria-selected', x === b));
+  document.querySelectorAll('.panel').forEach(p => { p.hidden = p.dataset.panel !== b.dataset.tab; });
+  updateTableOps();
+});
+// 리본 버튼을 눌러도 본문 선택이 풀리지 않게
+$('ribbon').addEventListener('mousedown', e => { if (e.target.closest('button') && !e.target.closest('.big')) e.preventDefault(); });
+let savedRange = null;
+document.addEventListener('selectionchange', () => {
+  const s = getSelection();
+  if (s.rangeCount && $('editor').contains(s.anchorNode)) { savedRange = s.getRangeAt(0).cloneRange(); updateTableOps(); }
+});
+function restoreRange() {
+  if (!savedRange || !$('editor').contains(savedRange.startContainer)) return;
+  $('editor').focus(); const s = getSelection(); s.removeAllRanges(); s.addRange(savedRange);
+}
+function updateTableOps() { $('tableOps').classList.toggle('off', !caretIn('td, th')); }
+const needPage = () => { if (!cur.page) { toast('먼저 페이지를 열거나 만드세요.'); return false; } return true; };
+
+document.querySelectorAll('[data-cmd]').forEach(b => b.onclick = () => { if (!needPage()) return; restoreRange(); exec(b.dataset.cmd); });
+document.querySelectorAll('[data-block]').forEach(b => b.onclick = () => { if (!needPage()) return; restoreRange(); formatBlock(b.dataset.block); });
+$('fontSize').onchange = () => { const v = $('fontSize').value; $('fontSize').value = ''; if (!v || !needPage()) return; restoreRange(); fontSize(+v); };
+$('btnCheck').onclick = () => { if (!needPage()) return; restoreRange(); toggleChecklist(); };
+$('autoQuick').onclick = () => { S.auto = !S.auto; saveSettings(); toast(S.auto ? '자동 목록을 켰어요. “1. ” “- ” “[] ”를 입력하면 목록이 돼요.' : '자동 목록을 껐어요. “1. ”을 입력해도 글자 그대로 남아요.'); };
+
+// 색 고르기
+const TEXT_COLORS = ['#000000', '#e03131', '#f08c00', '#2f9e44', '#1971c2', '#7048e8', '#c2255c', '#0c8599', '#868e96', '#5c940d', '#a61e4d', '#ffffff'];
+const HL_COLORS = ['#fff176', '#b9f6ca', '#b3e5fc', '#f8bbd0', '#ffe0b2', '#e1bee7', '#ffcdd2', '#c5cae9', '#dcedc8', '#f0f4c3', '#d7ccc8', ''];
+$('colorPop').innerHTML = TEXT_COLORS.map(c => `<button class="sw" data-c="${c}" style="background:${c}" title="${c}"></button>`).join('');
+$('hlPop').innerHTML = HL_COLORS.map(c => `<button class="sw${c ? '' : ' none'}" data-c="${c}" style="${c ? 'background:' + c : ''}" title="${c ? c : '형광펜 없애기'}"></button>`).join('');
+document.querySelectorAll('[data-pop]').forEach(b => b.onclick = () => {
+  const p = $(b.dataset.pop), open = p.hidden;
+  document.querySelectorAll('.pop').forEach(x => { x.hidden = true; });
+  if (!open) return;
+  p.hidden = false; const r = b.getBoundingClientRect();
+  p.style.left = Math.max(8, Math.min(innerWidth - p.offsetWidth - 8, r.left)) + 'px'; p.style.top = r.bottom + 4 + 'px';
+});
+$('colorPop').onclick = e => { const c = e.target.closest('[data-c]'); if (!c || !needPage()) return; $('colorPop').hidden = true; $('colorBar').style.background = c.dataset.c; restoreRange(); exec('foreColor', c.dataset.c); };
+$('hlPop').onclick = e => { const c = e.target.closest('[data-c]'); if (!c || !needPage()) return; $('hlPop').hidden = true; if (c.dataset.c) $('hlBar').style.background = c.dataset.c; restoreRange(); exec('hiliteColor', c.dataset.c); };
+// 표 크기 고르기
+$('tgrid').innerHTML = Array.from({ length: 64 }, (_, i) => `<i data-r="${Math.floor(i / 8) + 1}" data-c="${i % 8 + 1}"></i>`).join('');
+$('tgrid').addEventListener('mouseover', e => { const t = e.target.closest('i'); if (!t) return; const r = +t.dataset.r, c = +t.dataset.c; $('tgrid').querySelectorAll('i').forEach(x => x.classList.toggle('on', +x.dataset.r <= r && +x.dataset.c <= c)); $('tlabel').textContent = `${r} × ${c} 표`; });
+$('tgrid').addEventListener('click', e => { const t = e.target.closest('i'); if (!t || !needPage()) return; $('tablePop').hidden = true; restoreRange(); insertHTML(tableHTML(+t.dataset.r, +t.dataset.c)); });
+document.querySelectorAll('[data-table]').forEach(b => b.onclick = () => { restoreRange(); if (!tableOp(b.dataset.table)) toast('표 안을 먼저 누르세요.'); });
+$('btnImage').onclick = () => needPage() && $('pickImage').click();
+$('btnFile').onclick = () => needPage() && $('pickFile').click();
+$('pickImage').onchange = async () => { const fs = [...$('pickImage').files]; $('pickImage').value = ''; restoreRange(); for (const f of fs) await addFile(f); };
+$('pickFile').onchange = async () => { const fs = [...$('pickFile').files]; $('pickFile').value = ''; restoreRange(); for (const f of fs) await addFile(f); };
+$('btnDate').onclick = () => { if (!needPage()) return; restoreRange(); insertText(new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' })); };
+$('btnTime').onclick = () => { if (!needPage()) return; restoreRange(); insertText(new Date().toLocaleTimeString('ko-KR', { hour: 'numeric', minute: '2-digit' })); };
+$('btnHr').onclick = () => { if (!needPage()) return; restoreRange(); insertHTML('<hr><p><br></p>'); };
+$('btnLink').onclick = async () => {
+  if (!needPage()) return;
+  const r = savedRange && savedRange.cloneRange(), text = r ? r.toString() : '';
+  let url = await ask('링크 넣기', 'https://…', text.match(/^https?:\/\//) ? text : 'https://'); if (!url) return;
+  if (!/^(https?:|mailto:)/i.test(url)) url = 'https://' + url;
+  savedRange = r; restoreRange();
+  if (text) exec('createLink', url); else insertHTML(`<a href="${esc(url)}" target="_blank" rel="noopener">${esc(url)}</a>&nbsp;`);
+};
+$('openSettings').onclick = () => settingsModal();
+$('openStorage').onclick = () => storageModal();
+$('account').onclick = () => storageModal();
+
+// ---------- 한글·엑셀 변환 ----------
+async function pagesFor(scope, page = cur.page) {
+  const list = scope === 'page' ? [page] : cur.sec.pages;
+  const out = [];
+  for (const p of list) {
+    const html = p === cur.page ? serialize() : await store.loadPage(p);
+    out.push({ title: p.title || '제목 없음', date: fmtFull(p.created), created: fmtFull(p.created), updated: fmtFull(p.updated), html });
+  }
+  return out;
+}
+const fileBase = s => (s || '노트').replace(/[\\/:*?"<>|]/g, ' ').trim().slice(0, 60) || '노트';
+async function convert(fmt, pages, whole) {
+  return fmt === 'hwpx' ? toHwpx(pages, fid => store.getFile(fid)) : toXlsx(pages, whole);
+}
+document.querySelectorAll('[data-export]').forEach(b => b.onclick = async () => {
+  const fmt = b.dataset.export, scope = b.dataset.scope;
+  if (scope === 'page' && !needPage()) return;
+  if (scope === 'section' && !cur.sec?.pages.length) return toast('이 섹션에 페이지가 없어요.');
+  try {
+    toast(`${fmt === 'hwpx' ? '한글' : '엑셀'} 파일로 바꾸는 중…`, [], 0);
+    await flush();
+    const pages = await pagesFor(scope);
+    const blob = await convert(fmt, pages, scope === 'section');
+    const name = fileBase(scope === 'page' ? cur.page.title : `${cur.nb.name} - ${cur.sec.name}`) + '.' + fmt;
+    download(blob, name);
+    let msg = `“${name}” 파일을 내려받았어요.`;
+    if (store.kind === 'drive' && S.exportToDrive) { await store.saveExport(blob, name); msg += ' 드라이브 “내보내기” 폴더에도 저장했어요.'; }
+    toast(msg, [], 6000);
+  } catch (e) { $('toast').hidden = true; handleErr(e); }
+});
+// 페이지를 닫을 때 드라이브에 자동으로 변환해 두기
+async function autoExport(p) {
+  const fmts = S.autoExport === 'both' ? ['hwpx', 'xlsx'] : [S.autoExport];
+  try {
+    await saving;
+    const pages = [{ title: p.title || '제목 없음', date: fmtFull(p.created), created: fmtFull(p.created), updated: fmtFull(p.updated), html: await store.loadPage(p) }];
+    p.exp ||= {};
+    for (const f of fmts) p.exp[f] = await store.saveExport(await convert(f, pages, false), fileBase(p.title) + '.' + f, p.exp[f]);
+    scheduleIndexSave();
+  } catch (e) { console.warn('자동 변환 실패', e); }
+}
+
+// ---------- 설정 창 ----------
+function settingsModal() {
+  const sw = (k, label, hint, cls = '') => `<label class="sw-row ${cls}"><span>${label}${hint ? `<small>${hint}</small>` : ''}</span><input type="checkbox" class="switch" data-k="${k}" ${S[k] ? 'checked' : ''}></label>`;
+  const drive = store?.kind === 'drive';
+  modal(`<h2>설정</h2>
+    <div class="set"><h3>자동 서식</h3>
+      ${sw('auto', '자동 목록 사용', '줄 맨 앞에 아래 글자를 쓰고 띄어쓰기를 하면 목록으로 바뀌어요. 끄면 쓴 그대로 남아요.')}
+      ${sw('autoNumber', '“1. ” “1) ” → 번호 목록', '', 'sub-sw')}
+      ${sw('autoBullet', '“- ” “* ” → 글머리 기호', '', 'sub-sw')}
+      ${sw('autoCheck', '“[] ” → 할 일(체크박스)', '', 'sub-sw')}
+      <p style="font-size:12.5px">바뀐 직후 <b>백스페이스</b>를 누르면 그 한 번만 원래 글자로 되돌아가요.</p></div>
+    <div class="set"><h3>그림</h3>${sw('shrink', '큰 사진은 줄여서 올리기', '긴 쪽 1600픽셀로 줄여 저장공간을 아껴요. 끄면 원본 그대로 올려요.')}</div>
+    <div class="set"><h3>한글·엑셀 변환</h3>
+      ${sw('exportToDrive', '바꾼 파일을 드라이브에도 저장', drive ? '“드라이브 노트/내보내기” 폴더에 저장돼요.' : '구글 드라이브에 연결하면 쓸 수 있어요.')}
+      <div class="sw-row" style="cursor:default"><span>자동 변환<small>${drive ? '페이지를 고치고 다른 페이지로 넘어갈 때, 그 페이지를 드라이브 “내보내기” 폴더에 자동으로 변환해 둬요.' : '구글 드라이브에 연결하면 쓸 수 있어요.'}</small></span></div>
+      <div class="radio-row">${Object.entries(AUTO_LABEL).map(([v, l]) => `<label><input type="radio" name="autoExport" value="${v}" ${S.autoExport === v ? 'checked' : ''} ${drive ? '' : 'disabled'}>${l}</label>`).join('')}</div></div>
+    <div class="set"><h3>화면</h3><div class="radio-row">${[['system', '기기 설정 따라'], ['light', '밝게'], ['dark', '어둡게']].map(([v, l]) => `<label><input type="radio" name="theme" value="${v}" ${S.theme === v ? 'checked' : ''}>${l}</label>`).join('')}</div></div>
+    <div class="row"><button class="btn primary" id="setDone">닫기</button></div>`, m => {
+    const sync = () => m.querySelectorAll('.sub-sw input').forEach(i => { i.disabled = !S.auto; });
+    sync();
+    if (!drive) m.querySelector('[data-k="exportToDrive"]').disabled = true;
+    m.addEventListener('change', e => {
+      const t = e.target;
+      if (t.dataset.k) S[t.dataset.k] = t.checked;
+      if (t.name === 'autoExport') S.autoExport = t.value;
+      if (t.name === 'theme') S.theme = t.value;
+      saveSettings(); sync();
+    });
+    m.querySelector('#setDone').onclick = closeModal;
+  });
+}
+
+// ---------- 저장 위치 · 계정 ----------
+function storageModal() {
+  const drive = store?.kind === 'drive';
+  modal(`<h2>저장 위치</h2>
+    ${drive ? `<p>지금 노트는 <b>구글 드라이브</b>의 “드라이브 노트” 폴더에 저장돼요. 이 앱은 자기가 만든 파일만 볼 수 있어요.</p>
+      <button class="choice" id="stOpen"><b>드라이브에서 폴더 열기</b><small>그림·첨부 파일·내보낸 파일을 드라이브에서 직접 볼 수 있어요.</small></button>
+      <button class="choice" id="stMigrate"><b>이 기기에 있던 노트를 드라이브로 옮기기</b><small>체험 모드로 쓴 노트가 있으면 드라이브로 복사해요.</small></button>
+      <button class="choice" id="stOut"><b>로그아웃</b><small>노트는 드라이브에 그대로 남아요.</small></button>`
+    : `<p>지금 노트는 <b>이 기기 브라우저 안</b>에만 저장돼요 (체험 모드). 다른 기기에서는 보이지 않고, 브라우저 기록을 지우면 사라질 수 있어요.</p>
+      <button class="choice" id="stDrive" ${CLIENT_ID ? '' : 'disabled'}><b>구글 드라이브로 바꾸기</b><small>${CLIENT_ID ? '로그인하면 이 기기의 노트를 드라이브로 옮길 수 있어요.' : '먼저 config.js에 구글 클라이언트 ID를 넣어야 해요. README.md를 보세요.'}</small></button>`}
+    <div class="row"><button class="btn" id="stClose">닫기</button></div>`, m => {
+    m.querySelector('#stClose').onclick = closeModal;
+    m.querySelector('#stOpen')?.addEventListener('click', () => window.open(`https://drive.google.com/drive/folders/${store.root}`, '_blank', 'noopener'));
+    m.querySelector('#stOut')?.addEventListener('click', async () => { await flush().catch(() => {}); store.signOut(); localStorage.removeItem('dn-mode'); location.reload(); });
+    m.querySelector('#stMigrate')?.addEventListener('click', () => { closeModal(); migrate(); });
+    m.querySelector('#stDrive')?.addEventListener('click', async () => { await flush().catch(() => {}); localStorage.setItem('dn-mode', 'drive'); closeModal(); startDrive(true, true); });
+  });
+}
+// 이 기기(체험) 노트 → 드라이브
+async function migrate() {
+  const local = new LocalStore(); await local.init();
+  const lix = await local.loadIndex();
+  const pages = lix ? lix.notebooks.flatMap(n => n.sections.flatMap(s => s.pages)) : [];
+  if (!pages.length) return toast('이 기기에 옮길 노트가 없어요.');
+  if (!(await confirmBox('이 기기 노트를 드라이브로 옮기기', `페이지 ${pages.length}개를 드라이브로 복사해요. 이 기기의 노트는 지워지지 않아요.`, '옮기기', false))) return;
+  try {
+    let n = 0;
+    for (const nb of lix.notebooks) {
+      const copy = { id: uid(), name: nb.name + ' (이 기기에서 옮김)', sections: [] };
+      for (const sec of nb.sections) {
+        const s2 = { ...sec, id: uid(), pages: [] };
+        for (const p of sec.pages) {
+          toast(`옮기는 중… ${++n} / ${pages.length}`, [], 0);
+          let html = await local.loadPage(p);
+          const doc = parseHTML(html);
+          for (const el of doc.querySelectorAll('[data-fid]')) {
+            const b = await local.getFile(el.dataset.fid);
+            if (b) el.dataset.fid = await store.putFile(b, el.dataset.name || 'image');
+          }
+          const p2 = { ...p, id: uid(), fid: undefined, exp: undefined };
+          await store.savePage(p2, doc.innerHTML);
+          s2.pages.push(p2);
+        }
+        copy.sections.push(s2);
+      }
+      ix.notebooks.push(copy);
+    }
+    scheduleIndexSave(); await flush();
+    renderAll(); toast('다 옮겼어요. 전자 필기장 목록에서 “(이 기기에서 옮김)”을 찾으세요.', [], 8000);
+  } catch (e) { handleErr(e); }
+}
+
+// ---------- 시작 ----------
+async function load() {
+  status('', '불러오는 중…');
+  await store.init();
+  ix = await store.loadIndex();
+  if (!ix) { ix = newIndex(); await store.saveIndex(ix); }
+  let last = {}; try { last = JSON.parse(localStorage.getItem('dn-last') || '{}'); } catch {}
+  reselect(last.nb, last.sec, last.page);
+  if (!cur.page && cur.sec) cur.page = cur.sec.pages[0] || null;
+  renderAll(); applySettings(); setView(narrow() && !cur.page ? 'sections' : 'page');
+  await openPage(cur.page);
+  $('account').textContent = store.kind === 'drive' ? '☁ 구글 드라이브' : '💾 이 기기 (체험)';
+  status('ok');
+}
+async function startLocal() {
+  store = new LocalStore();
+  try { await load(); } catch (e) { handleErr(e); }
+}
+async function startDrive(interactive, offerMigrate) {
+  store = new DriveStore(CLIENT_ID);
+  if (!store.restore()) {
+    if (!interactive) return driveGate();
+    try { await store.signIn(); } catch (e) { toast(e.message, [], 8000); return driveGate(); }
+  }
+  try {
+    await load();
+    if (offerMigrate) migrate();
+  } catch (e) {
+    if (e.auth) return driveGate();
+    handleErr(e, () => location.reload());
+  }
+}
+// 새로 열 때마다 구글 로그인 버튼 한 번 (팝업은 버튼을 눌러야 열려서)
+function driveGate() {
+  showEmpty(`<h2>구글 드라이브에 연결해 주세요</h2><p>노트는 내 구글 드라이브의 “드라이브 노트” 폴더에 저장돼요.</p><div class="btns"><button class="btn primary" id="gateGo">구글로 로그인</button><button class="btn" id="gateLocal">이 기기에서 체험하기</button></div>`);
+  $('account').textContent = '로그인 필요'; status('', '');
+  $('gateGo').onclick = () => startDrive(true);
+  $('gateLocal').onclick = () => { localStorage.setItem('dn-mode', 'local'); startLocal(); };
+}
+function welcome() {
+  $('modal').dataset.locked = '1';
+  modal(`<div class="welcome"><span class="logo">N</span><h2>드라이브 노트에 오신 걸 환영해요</h2><p>노트를 어디에 저장할까요? 나중에 설정에서 바꿀 수 있어요.</p>
+    <button class="choice" id="wDrive" ${CLIENT_ID ? '' : 'disabled'}><b>☁ 구글 드라이브에 저장 (추천)</b><small>${CLIENT_ID ? '휴대폰·컴퓨터 어디서나 같은 노트를 볼 수 있어요. 내 드라이브의 “드라이브 노트” 폴더만 사용해요.' : '아직 구글 연결 설정이 안 돼 있어요. README.md의 순서대로 config.js에 클라이언트 ID를 넣으면 쓸 수 있어요.'}</small></button>
+    <button class="choice" id="wLocal"><b>💾 이 기기에만 저장 (체험)</b><small>로그인 없이 바로 써 볼 수 있어요. 다른 기기와 연동되지 않아요.</small></button></div>`, m => {
+    m.querySelector('#wDrive').onclick = () => { delete $('modal').dataset.locked; closeModal(); localStorage.setItem('dn-mode', 'drive'); startDrive(true); };
+    m.querySelector('#wLocal').onclick = () => { delete $('modal').dataset.locked; closeModal(); localStorage.setItem('dn-mode', 'local'); startLocal(); };
+  });
+}
+
+setupEditor($('editor'), {
+  onChange: markDirty,
+  settings: () => S,
+  uploadImage: f => upload(f, true),
+  uploadFile: f => upload(f, false),
+  openFile,
+  onAuto: (kind, undo) => toast(kind === 'ol' ? '번호 목록으로 바꿨어요.' : kind === 'ul' ? '글머리 기호로 바꿨어요.' : '할 일 목록으로 바꿨어요.',
+    [{ label: '되돌리기', run: undo }, { label: '자동 목록 끄기', run: () => { S.auto = false; saveSettings(); undo(); toast('자동 목록을 껐어요. 설정이나 홈 탭에서 다시 켤 수 있어요.'); } }]),
+});
+applySettings();
+matchMedia('(max-width: 820px)').addEventListener('change', () => setView($('shell').dataset.view));
+const mode = localStorage.getItem('dn-mode');
+if (mode === 'drive' && CLIENT_ID) startDrive(false);
+else if (mode === 'local') startLocal();
+else welcome();
