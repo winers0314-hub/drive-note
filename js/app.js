@@ -590,6 +590,7 @@ $('linesDefault').onclick = () => {
 };
 
 // ---------- 맞춤법 검사 (검토 탭) ----------
+const SPELL_API = (window.NOTE_CONFIG && window.NOTE_CONFIG.spellApi) || 'api/spellcheck';
 const SPELL_BLOCKS = 'p, h1, h2, h3, h4, h5, h6, li, td, th, blockquote, pre';
 const norm = t => t.replace(/ /g, ' ');
 // 블록이 직접 가진 글자 (안쪽 블록과 첨부 파일 이름은 빼고)
@@ -643,10 +644,10 @@ async function runSpell() {
   const items = [];
   try {
     for (const g of groups) {
-      const r = await fetch('api/spellcheck', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + store.token }, body: JSON.stringify({ p: g.map(b => b.text.slice(0, 2000)) }) });
-      if (r.status === 503) { $('spell').hidden = true; return toast('맞춤법 검사 설정이 아직 안 돼 있어요. Vercel에 OPENAI_API_KEY를 넣어야 해요.', [], 10000); }
+      const r = await fetch(SPELL_API, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + store.token }, body: JSON.stringify({ p: g.map(b => b.text.slice(0, 2000)) }) });
+      if (r.status === 503) { $('spell').hidden = true; return toast('맞춤법 검사 서버에 OpenAI 키가 설정돼 있지 않아요.', [], 10000); }
       if (r.status === 401) { $('spell').hidden = true; return toast('이 계정은 맞춤법 검사를 쓸 수 없어요. 다시 로그인해 보세요.', [], 10000); }
-      if (r.status === 404) { $('spell').hidden = true; return toast('맞춤법 검사는 인터넷에 올린 사이트에서만 돼요.', [], 8000); }
+      if (r.status === 404) { $('spell').hidden = true; return toast('맞춤법 검사 서버를 찾지 못했어요. config.js의 spellApi를 확인해 주세요.', [], 8000); }
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error('맞춤법 검사 오류: ' + (j.detail || j.error || r.status));
       items.push(...(j.items || []).map(it => ({ ...it, block: g[it.p] })).filter(it => it.block));

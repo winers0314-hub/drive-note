@@ -20,16 +20,11 @@
   - [입력할 때 빨간 밑줄]을 켜면 브라우저가 틀린 낱말에 밑줄을 그어요(무료, 바로 표시).
 - 모든 노트 검색, 휴대폰 화면, 어두운 화면
 
-## 맞춤법 검사 준비 (Vercel 설정, 약 3분)
+## 맞춤법 검사가 동작하는 방식
 
-맞춤법 검사는 OpenAI(ChatGPT) API를 써요. 홈페이지에서 쓰는 키를 그대로 쓰면 돼요.
-
-1. https://vercel.com → `drive-note` 프로젝트 → **Settings → Environment Variables**
-2. **Key** `OPENAI_API_KEY`, **Value**에 OpenAI API 키(`sk-…`) → **Save**
-3. (선택) **Key** `ALLOWED_EMAILS`, **Value**에 내 구글 이메일 — 이 계정만 맞춤법 검사를 쓸 수 있게 해요.
-4. **Deployments** 탭 → 맨 위 배포의 **⋯ → Redeploy** (환경변수는 다시 배포해야 적용돼요)
-
-- 구글로 로그인한 상태에서만 동작하고, 다른 앱의 로그인으로는 쓸 수 없어서 다른 사람이 API 비용을 쓰지 못해요.
+- 홈페이지(10senter.vercel.app)의 `api/spellcheck.js`가 홈페이지에 설정된 OpenAI 키로 검사해요. `config.js`의 `spellApi`가 그 주소예요.
+- 에스 노트에 구글로 로그인한 상태에서만 동작하고, 에스 노트 주소에서만 부를 수 있어서 다른 사람이 API 비용을 쓰지 못해요.
+- 특정 계정만 쓰게 하려면 홈페이지 Vercel 프로젝트의 환경변수 `ALLOWED_EMAILS`에 구글 이메일을 넣어요(선택).
 - 비용은 페이지 하나 검사에 보통 1원 안팎이에요(작은 모델 사용).
 
 ## 1. 구글 드라이브 연결하기 (처음 한 번, 약 20~30분)

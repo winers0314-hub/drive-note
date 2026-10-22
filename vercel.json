@@ -1,5 +1,0 @@
-{
-  "functions": {
-    "api/spellcheck.js": { "regions": ["icn1"], "maxDuration": 60 }
-  }
-}
