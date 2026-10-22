@@ -23,6 +23,7 @@ function applySettings() {
   const sp = $('spellLive'); sp.classList.toggle('is-on', S.browserSpell); sp.querySelector('b').textContent = S.browserSpell ? '켬' : '끔';
   $('editor').setAttribute('spellcheck', S.browserSpell ? 'true' : 'false');
   updateLinesUI();
+  applyWrap();
   $('convertNote').textContent = store?.kind === 'drive'
     ? (S.exportToDrive ? '바꾼 파일은 내려받기 되고, 드라이브 "에스 노트/내보내기" 폴더에도 저장돼요.' : '바꾼 파일은 이 기기에 내려받기 돼요.') + (S.autoExport !== 'none' ? ` · 자동 변환 켬(${AUTO_LABEL[S.autoExport]})` : '')
     : '바꾼 파일은 이 기기에 내려받기 돼요. 한글 파일은 .hwpx 형식이라 한글 2014 이후 버전에서 열려요.';
@@ -210,14 +211,26 @@ function reselect(nbId, secId, pageId) {
 }
 function renderAll() { renderNotebook(); renderSections(); renderPages(); }
 const NB_COLORS = ['#4dab9a', '#529cca', '#e255a1', '#ffa344', '#9a6dd7', '#ff7369', '#937264', '#e9c03a'];
+// 펼쳐 둔 전자 필기장 (컴퓨터 화면의 트리)
+let openNbs = new Set(), curCollapsed = false; // 지금 전자 필기장은 늘 펼치되, 화살표로 접으면 접힌 채로
+try { openNbs = new Set(JSON.parse(localStorage.getItem('dn-open-nb') || '[]')); } catch {}
+const saveOpenNbs = () => { try { localStorage.setItem('dn-open-nb', JSON.stringify([...openNbs])); } catch {} };
+// 전자 필기장 칸: 컴퓨터에서는 전자 필기장 아래에 섹션이 펼쳐지는 트리, 폴드에서는 전자 필기장만 (섹션은 옆 칸)
 function renderNotebook() {
   $('nbName').textContent = cur.nb ? cur.nb.name : '전자 필기장 없음';
   $('secHead').textContent = cur.nb ? cur.nb.name : '';
-  $('nbList').innerHTML = ix.notebooks.map((n, i) => `<li data-id="${n.id}" class="${n === cur.nb ? 'on' : ''}"><span class="nbi" style="background:${NB_COLORS[i % NB_COLORS.length]}"></span><span class="name">${esc(n.name)}</span><button class="more" data-more="nb" aria-label="전자 필기장 메뉴">⋯</button></li>`).join('');
+  if (cur.nb && !curCollapsed) openNbs.add(cur.nb.id);
+  $('nbList').innerHTML = ix.notebooks.map((n, i) => {
+    const open = openNbs.has(n.id);
+    return `<li data-id="${n.id}" class="nb-item${n === cur.nb ? ' on' : ''}${open ? ' open' : ''}"><button class="chev" data-chev aria-label="${open ? '접기' : '펼치기'}">›</button><span class="nbi" style="background:${NB_COLORS[i % NB_COLORS.length]}"></span><span class="name">${esc(n.name)}</span><button class="more" data-more="nb" aria-label="전자 필기장 메뉴">⋯</button></li>` +
+      (open ? n.sections.map(s => `<li data-sec="${s.id}" data-nb="${n.id}" class="tree-sec${s === cur.sec ? ' on' : ''}"><span class="bar" style="background:${s.color}"></span><span class="name">${esc(s.name)}</span><button class="more" data-more="sec" aria-label="섹션 메뉴">⋯</button></li>`).join('') +
+        `<li class="tree-sec tree-add" data-addsec="${n.id}"><span class="bar"></span><span class="name">＋ 섹션 추가</span></li>` : '');
+  }).join('');
 }
 function renderSections() {
   const ul = $('sectionList');
   ul.innerHTML = (cur.nb?.sections || []).map(s => `<li data-id="${s.id}" class="${s === cur.sec ? 'on' : ''}" draggable="true" style="border-left-color:${s.color}"><span class="dot" style="background:${s.color}"></span><span class="name">${esc(s.name)}</span><button class="more" data-more="sec" aria-label="섹션 메뉴">⋯</button></li>`).join('');
+  renderNotebook();
 }
 const fmtDate = t => t ? new Date(t).toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' }) : '';
 const fmtFull = t => t ? new Date(t).toLocaleString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long', hour: 'numeric', minute: '2-digit' }) : '';
@@ -254,6 +267,21 @@ function applyNav() {
 function setNav(off) { navOff = off; try { localStorage.setItem('dn-nav-off', off ? '1' : '0'); } catch {} applyNav(); }
 $('navToggle').onclick = () => setNav(!navOff);
 $('fullView').onclick = () => setNav(true);
+// 글만 보기: 메뉴·목록을 모두 숨기고 제목과 글만
+function setFocus(on) {
+  document.body.classList.toggle('focus', on); $('focusExit').hidden = !on;
+  if (on && !cur.page) toast('페이지를 열면 글만 크게 볼 수 있어요.');
+}
+$('focusBtn').onclick = () => setFocus(true);
+$('focusView').onclick = () => setFocus(true);
+$('focusExit').onclick = () => setFocus(false);
+addEventListener('keydown', e => { if (e.key === 'Escape' && document.body.classList.contains('focus') && $('modal').hidden) setFocus(false); });
+// 옆으로 길게 쓰기 (줄 바꿈 안 함)
+function applyWrap() {
+  $('page').classList.toggle('nowrap', !!S.nowrap);
+  const b = $('nowrapBtn'); b.classList.toggle('is-on', !!S.nowrap); b.querySelector('b').textContent = S.nowrap ? '켬' : '끔';
+}
+$('nowrapBtn').onclick = () => { S.nowrap = !S.nowrap; saveSettings(); toast(S.nowrap ? '줄을 바꾸지 않고 옆으로 이어 써요. 옆으로 스크롤해서 보세요.' : '창 너비에 맞춰 줄을 바꿔요.'); };
 $('canvas').addEventListener('click', () => { if (fold() && !navOff && cur.page) setNav(true); });
 applyNav();
 
@@ -461,6 +489,7 @@ $('nbMenu').onclick = async e => {
 };
 function selectNotebook(nb) {
   if (!nb || nb === cur.nb) return;
+  curCollapsed = false;
   if (cur.page) leavePage(cur.page);
   cur.nb = nb; cur.sec = nb.sections[0] || null; cur.page = null; searchMode = null; renderAll(); openPage(cur.sec?.pages[0] || null);
   if (phone()) setView('sections');
@@ -479,12 +508,31 @@ async function deleteNotebook(nb) {
 }
 // 전자 필기장 칸 (넓은 화면)
 $('nbList').addEventListener('click', e => {
-  const li = e.target.closest('li[data-id]'); if (!li) return;
-  const nb = ix.notebooks.find(n => n.id === li.dataset.id);
-  if (e.target.closest('[data-more]')) { e.stopPropagation(); notebookMenu(nb, e.target.closest('[data-more]')); return; }
-  selectNotebook(nb);
+  const li = e.target.closest('li'); if (!li) return;
+  const more = e.target.closest('[data-more]');
+  if (li.dataset.addsec) { selectNotebook(ix.notebooks.find(n => n.id === li.dataset.addsec)); addSection(); return; }
+  if (li.dataset.sec) { // 트리의 섹션
+    const nb = ix.notebooks.find(n => n.id === li.dataset.nb), sec = nb?.sections.find(s => s.id === li.dataset.sec); if (!sec) return;
+    if (nb !== cur.nb) { if (cur.page) leavePage(cur.page); cur.nb = nb; renderNotebook(); }
+    if (more) { e.stopPropagation(); sectionMenu(sec, more); return; }
+    if (sec !== cur.sec) selectSection(sec);
+    return;
+  }
+  const nb = ix.notebooks.find(n => n.id === li.dataset.id); if (!nb) return;
+  if (more) { e.stopPropagation(); notebookMenu(nb, more); return; }
+  if (e.target.closest('[data-chev]')) { // 화살표: 펼치기·접기만
+    if (openNbs.has(nb.id)) openNbs.delete(nb.id); else openNbs.add(nb.id);
+    if (nb === cur.nb) curCollapsed = !openNbs.has(nb.id);
+    saveOpenNbs(); renderNotebook(); return;
+  }
+  curCollapsed = false; openNbs.add(nb.id); saveOpenNbs();
+  if (nb === cur.nb) renderNotebook(); else selectNotebook(nb);
 });
-$('nbList').addEventListener('contextmenu', e => { const li = e.target.closest('li[data-id]'); if (!li) return; e.preventDefault(); notebookMenu(ix.notebooks.find(n => n.id === li.dataset.id), { x: e.clientX, y: e.clientY }); });
+$('nbList').addEventListener('contextmenu', e => {
+  const li = e.target.closest('li'); if (!li) return; e.preventDefault();
+  if (li.dataset.sec) { const nb = ix.notebooks.find(n => n.id === li.dataset.nb); if (nb !== cur.nb) { if (cur.page) leavePage(cur.page); cur.nb = nb; renderNotebook(); } const sec = nb.sections.find(s => s.id === li.dataset.sec); if (sec) sectionMenu(sec, { x: e.clientX, y: e.clientY }); return; }
+  if (li.dataset.id) notebookMenu(ix.notebooks.find(n => n.id === li.dataset.id), { x: e.clientX, y: e.clientY });
+});
 $('addNotebook').onclick = () => addNotebook();
 function notebookMenu(nb, at) {
   const c = showCtx(`<button data-a="rename">이름 바꾸기</button><hr><button data-a="del" class="danger">전자 필기장 삭제</button>`, at);
@@ -609,6 +657,7 @@ $('account').onclick = () => storageModal();
 function applyLines(p) {
   $('editor').className = 'editor' + (p && p.lines ? ' lines-' + p.lines : '');
   updateLinesUI();
+  applyWrap();
 }
 function updateLinesUI() {
   const now = cur.page?.lines || '';
@@ -1149,7 +1198,22 @@ async function runImport(nbs, done) {
 // ---------- 프로그램으로 설치 (PWA) ----------
 let installEvt = null;
 const installed = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone;
-if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => {});
+// 새 버전을 올리면 설치한 앱도 알아서 바뀜: 창으로 돌아올 때·30분마다 확인 → 바뀌면 저장 후 새로고침
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(reg => {
+    const check = () => reg.update().catch(() => {});
+    addEventListener('focus', check); setInterval(check, 30 * 60e3);
+  }).catch(() => {});
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', async () => {
+    if (!hadController || reloading) return;
+    reloading = true;
+    const go = async () => { await flush().catch(() => {}); location.reload(); };
+    if (!dirty && $('modal').hidden && document.activeElement !== $('editor')) go();
+    else toast('새 버전이 나왔어요.', [{ label: '지금 바꾸기', run: go }], 0);
+  });
+}
 addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; });
 addEventListener('appinstalled', () => { installEvt = null; $('installApp').hidden = true; toast('설치했어요. 바탕화면이나 시작 메뉴의 “에스 노트”로 열 수 있어요.', [], 6000); });
 if (installed()) $('installApp').hidden = true;

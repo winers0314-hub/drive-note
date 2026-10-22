@@ -89,7 +89,30 @@ button { cursor: pointer; }
 .tlabel { display: block; text-align: center; font-size: 12px; color: var(--muted); margin-top: 6px; }
 
 /* 네 칸: 전자 필기장 · 섹션 · 페이지 · 본문 (원노트처럼) */
-.shell { flex: 1; min-height: 0; display: grid; grid-template-columns: 190px 200px 250px 1fr; }
+.shell { flex: 1; min-height: 0; display: grid; grid-template-columns: 240px 230px 1fr; }
+/* 컴퓨터: 전자 필기장 아래로 섹션이 펼쳐지는 트리 (원노트 데스크톱처럼) — 섹션 칸은 숨김 */
+.shell > .col-sec { display: none; }
+#nbList { padding: 0; }
+#nbList li.nb-item { margin: 0; border-radius: 0; padding: 10px 8px 10px 4px; border-bottom: 1px solid var(--line); gap: 6px; }
+#nbList li.nb-item.on { background: transparent; }
+#nbList li.nb-item.on .name { font-weight: 700; }
+#nbList li.nb-item:hover { background: var(--hover); }
+#nbList .chev { border: 0; background: transparent; width: 22px; height: 22px; border-radius: 4px; color: var(--muted); font-size: 15px; line-height: 1; padding: 0; transition: transform .15s; flex: none; }
+#nbList .chev:hover { background: var(--line); }
+#nbList li.open .chev { transform: rotate(90deg); }
+#nbList li.tree-sec { margin: 1px 6px 1px 26px; padding: 6px 8px; font-weight: 400; }
+#nbList li.tree-sec .bar { width: 4px; height: 16px; border-radius: 2px; flex: none; }
+#nbList li.tree-sec.on { background: var(--sel); font-weight: 600; }
+#nbList li.tree-add { color: var(--muted); font-size: 13px; }
+#nbList li.nb-item + li.nb-item, #nbList li.tree-add { border-bottom: 1px solid var(--line); }
+#nbList li.tree-add { margin: 1px 0 0; padding: 6px 8px 8px 40px; border-radius: 0; }
+.col-nb > .col-head { border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+/* 페이지 목록: 맨 위 [페이지 추가], 제목만 한 줄씩 */
+.pages-top { padding: 10px 10px 4px; }
+.add-page { border: 1px solid var(--line-2); background: var(--paper); color: var(--ink); border-radius: 6px; padding: 5px 12px; font-size: 13px; }
+.add-page:hover { background: var(--hover); }
+#pagesHead:empty { display: none; }
+@media (min-width: 1024px) { #pageList li .date { display: none; } #pageList li { padding: 6px 10px; } }
 .shell.nav-off { grid-template-columns: 1fr; }
 .shell.nav-off .col { display: none; }
 .col-nb { background: var(--panel); }
@@ -138,8 +161,19 @@ button { cursor: pointer; }
 .ctx .colors button { width: 22px; height: 22px; padding: 0; border-radius: 4px; flex: none; }
 
 /* 본문 */
-.canvas { overflow-y: auto; min-height: 0; background: var(--paper); position: relative; }
-.page { max-width: 900px; margin: 0 auto; padding: 56px 72px 160px; }
+.canvas { overflow: auto; min-height: 0; background: var(--paper); position: relative; }
+/* 글 폭 제한 없음: 창 너비를 다 쓰고, 넓은 표·그림은 옆으로 스크롤 */
+.page { padding: 28px 40px 160px; min-width: 0; }
+.editor table { max-width: none; }
+/* 보기 탭 [옆으로 길게 쓰기]: 줄을 바꾸지 않고 옆으로 이어 씀 */
+.page.nowrap { width: max-content; min-width: 100%; }
+.page.nowrap .editor :is(p, li, h1, h2, h3, h4, blockquote) { white-space: nowrap; }
+/* 글만 보기 (오른쪽 위 확장 버튼): 메뉴·목록을 모두 숨김 */
+body.focus .titlebar, body.focus .ribbon-tabs, body.focus .ribbon, body.focus .col { display: none !important; }
+body.focus .shell { grid-template-columns: 1fr !important; }
+body.focus .page { padding-top: 40px; }
+.focus-exit { position: fixed; z-index: 60; top: 10px; right: 14px; border: 1px solid var(--line-2); background: var(--paper); color: var(--ink); border-radius: 8px; padding: 6px 12px; font-size: 13px; box-shadow: var(--shadow); opacity: .55; }
+.focus-exit:hover { opacity: 1; }
 .ptitle { width: 100%; border: 0; background: transparent; font-size: 36px; font-weight: 700; line-height: 1.2; padding: 4px 0 2px; outline: none; }
 .ptitle::placeholder { color: var(--line-2); }
 .pdate { font-size: 12px; color: var(--muted); margin: 6px 0 18px; }
@@ -210,6 +244,10 @@ button { cursor: pointer; }
 /* 폴드를 펼친 화면·태블릿: 목록 세 칸 + 오른쪽에 글이 살짝 보임. 글을 누르면 목록이 접힘 */
 @media (min-width: 600px) and (max-width: 1023px) {
   .shell { grid-template-columns: 27fr 27fr 30fr 16fr; }
+  .shell > .col-sec { display: flex; }
+  #nbList .chev, #nbList li.tree-sec { display: none; }
+  #nbList li.nb-item { padding: 10px; }
+  #nbList li.nb-item.on { background: var(--sel); }
   .shell.nav-off { grid-template-columns: 1fr; }
   .shell:not(.nav-off) .canvas { cursor: pointer; }
   .shell:not(.nav-off) .page { padding: 20px 14px; }
@@ -226,6 +264,7 @@ button { cursor: pointer; }
 @media (max-width: 599px) {
   .wide-only { display: none !important; }
   .col-sec .nb { display: block; }
+  .shell > .col-sec { display: flex; }
   .shell, .shell.nav-off { grid-template-columns: 1fr; }
   .shell[data-view="sections"] .col-pages, .shell[data-view="sections"] .canvas,
   .shell[data-view="pages"] .col-sec, .shell[data-view="pages"] .canvas,

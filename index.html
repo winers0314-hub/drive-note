@@ -25,6 +25,7 @@
   <div class="brand"><span class="logo">S</span><span class="brand-name">에스 노트</span></div>
   <label class="search"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="M13 13l4 4"/></svg><input id="search" type="search" placeholder="모든 노트 검색" autocomplete="off"></label>
   <span class="sync" id="sync" role="status"></span>
+  <button class="tb-btn" id="focusBtn" title="글만 크게 보기 (메뉴 숨기기)" aria-label="글만 크게 보기">⤢</button>
   <button class="tb-btn acct" id="account" title="계정·저장 위치"></button>
 </header>
 
@@ -84,7 +85,8 @@
 
   <div class="panel" data-panel="view" hidden>
     <div class="grp"><span class="grp-label">노트선</span><button data-lines="" title="노트선 없음">없음</button><button data-lines="narrow" title="좁은 줄"><span class="ln-ico n"></span>좁은 줄</button><button data-lines="wide" title="넓은 줄"><span class="ln-ico w"></span>넓은 줄</button><button data-lines="grid" title="모눈"><span class="ln-ico g"></span>모눈</button></div>
-    <div class="grp"><button id="fullView" title="목록을 접고 글만 크게 봐요">⤢ 전체 페이지 보기</button></div>
+    <div class="grp"><button id="fullView" title="목록을 접고 글만 크게 봐요">⤢ 전체 페이지 보기</button><button id="focusView" title="메뉴까지 모두 숨기고 제목과 글만 봐요">⛶ 글만 보기</button></div>
+    <div class="grp"><button id="nowrapBtn" class="toggle" title="줄을 바꾸지 않고 옆으로 이어 쓰고, 옆으로 스크롤해서 봐요">옆으로 길게 쓰기 <b></b></button></div>
     <div class="grp"><button id="linesDefault" class="toggle" title="새로 만드는 페이지에 지금 노트선을 기본으로 씀">새 페이지에도 쓰기 <b></b></button></div>
   </div>
 
@@ -122,9 +124,9 @@
     <button class="add" id="addSection">＋ 섹션 추가</button>
   </aside>
   <aside class="col col-pages" aria-label="페이지">
+    <div class="pages-top"><button class="add-page" id="addPage">✎ 페이지 추가</button></div>
     <div class="col-head" id="pagesHead"></div>
     <ul class="list" id="pageList"></ul>
-    <button class="add" id="addPage">＋ 페이지 추가</button>
   </aside>
   <section class="canvas" id="canvas">
     <article class="page" id="page" hidden>
@@ -136,6 +138,7 @@
   </section>
 </main>
 
+<button class="focus-exit" id="focusExit" hidden title="메뉴 다시 보기 (Esc)">⤡ 메뉴 보기</button>
 <aside class="spell" id="spell" hidden aria-label="맞춤법 검사 결과"></aside>
 <aside class="spell ai" id="ai" hidden aria-label="AI 도우미"></aside>
 <div class="imgbar" id="imgBar" hidden><button data-w="25">25%</button><button data-w="50">50%</button><button data-w="75">75%</button><button data-w="100">원래 크기</button><button data-w="del" class="danger">삭제</button></div>
