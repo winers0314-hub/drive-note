@@ -2,7 +2,8 @@
 // 로그인: 팝업 + PKCE (라이브러리 없이). 돌아오는 주소는 ms-auth.html
 import { sanitize } from './doc.js';
 
-const AUTH = 'https://login.microsoftonline.com/common/oauth2/v2.0';
+// 로그인 범위: config.js의 msTenant ('common' = 개인·회사·학교 계정 모두, 또는 특정 조직의 테넌트 ID)
+const AUTH = `https://login.microsoftonline.com/${(window.NOTE_CONFIG && window.NOTE_CONFIG.msTenant) || 'common'}/oauth2/v2.0`;
 const GRAPH = 'https://graph.microsoft.com/v1.0';
 const SCOPE = 'Notes.Read offline_access';
 const redirectUri = () => location.origin + location.pathname.replace(/[^/]*$/, '') + 'ms-auth.html';
