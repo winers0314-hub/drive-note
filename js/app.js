@@ -1078,7 +1078,7 @@ function driveGate() {
 }
 function welcome() {
   $('modal').dataset.locked = '1';
-  modal(`<div class="welcome"><span class="logo">S</span><h2>에스 노트에 오신 걸 환영해요</h2><p>노트를 어디에 저장할까요? 나중에 설정에서 바꿀 수 있어요.</p>
+  modal(`<div class="welcome"><img class="logo-img big" src="icons/icon-192.png" alt=""><h2>에스 노트에 오신 걸 환영해요</h2><p>노트를 어디에 저장할까요? 나중에 설정에서 바꿀 수 있어요.</p>
     <button class="choice" id="wDrive" ${CLIENT_ID ? '' : 'disabled'}><b>☁ 구글 드라이브에 저장 (추천)</b><small>${CLIENT_ID ? '휴대폰·컴퓨터 어디서나 같은 노트를 볼 수 있어요. 내 드라이브의 “에스 노트” 폴더만 사용해요.' : '아직 구글 연결 설정이 안 돼 있어요. README.md의 순서대로 config.js에 클라이언트 ID를 넣으면 쓸 수 있어요.'}</small></button>
     <button class="choice" id="wLocal"><b>💾 이 기기에만 저장 (체험)</b><small>로그인 없이 바로 써 볼 수 있어요. 다른 기기와 연동되지 않아요.</small></button></div>`, m => {
     m.querySelector('#wDrive').onclick = () => { delete $('modal').dataset.locked; closeModal(); localStorage.setItem('dn-mode', 'drive'); startDrive(true); };

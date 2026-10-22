@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>에스 노트</title>
-<meta name="theme-color" content="#ffffff">
+<meta name="theme-color" content="#191919">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
 <link rel="icon" href="icons/icon-192.png" sizes="192x192">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
@@ -22,7 +22,7 @@
 <header class="titlebar">
   <button class="tb-btn only-narrow" id="navBack" aria-label="뒤로" hidden>‹</button>
   <button class="tb-btn wide-only" id="navToggle" title="목록 접기 (전체 페이지 보기)" aria-label="목록 접기·펴기">☰</button>
-  <div class="brand"><span class="logo">S</span><span class="brand-name">에스 노트</span></div>
+  <div class="brand"><img class="logo-img" src="icons/icon-192.png" alt=""><span class="brand-name">에스 노트</span></div>
   <label class="search"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="M13 13l4 4"/></svg><input id="search" type="search" placeholder="모든 노트 검색" autocomplete="off"></label>
   <span class="sync" id="sync" role="status"></span>
   <button class="tb-btn" id="focusBtn" title="글만 크게 보기 (메뉴 숨기기)" aria-label="글만 크게 보기">⤢</button>
@@ -104,7 +104,7 @@
   </div>
 
   <div class="panel" data-panel="settings" hidden>
-    <div class="grp"><button class="big" id="openSettings">⚙ 설정 열기</button><button class="big" id="openStorage">☁ 저장 위치·계정</button><button class="big" id="installApp">💻 프로그램으로 설치</button></div>
+    <div class="grp"><button class="big" id="openSettings">⚙ 설정 열기</button><button class="big" id="openStorage">☁ 저장 위치·계정</button><button class="big" id="installApp"><svg class="ico" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3v9.5M6.2 8.8 10 12.6l3.8-3.8M4 14.5V17h12v-2.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>프로그램으로 설치</button></div>
     <div class="grp"><button class="big" id="importOneNote"><span class="fi one">N</span>원노트에서 가져오기</button></div>
   </div>
 </div>
