@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>드라이브 노트</title>
+<meta name="theme-color" content="#7719aa">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%237719aa'/%3E%3Cpath d='M9 23V9h3l8 9.5V9h3v14h-3l-8-9.5V23z' fill='white'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/app.css">
+<script src="config.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script type="module" src="js/app.js"></script>
+</head>
+<body>
+<header class="titlebar">
+  <button class="tb-btn only-narrow" id="navBack" aria-label="뒤로" hidden>‹</button>
+  <div class="brand"><span class="logo">N</span><span class="brand-name">드라이브 노트</span></div>
+  <label class="search"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="M13 13l4 4"/></svg><input id="search" type="search" placeholder="모든 노트 검색" autocomplete="off"></label>
+  <span class="sync" id="sync" role="status"></span>
+  <button class="tb-btn acct" id="account" title="계정·저장 위치"></button>
+</header>
+
+<nav class="ribbon-tabs" role="tablist">
+  <button role="tab" data-tab="home" aria-selected="true">홈</button>
+  <button role="tab" data-tab="insert" aria-selected="false">삽입</button>
+  <button role="tab" data-tab="convert" aria-selected="false">한글·엑셀 변환</button>
+  <button role="tab" data-tab="settings" aria-selected="false">설정</button>
+</nav>
+<div class="ribbon" id="ribbon">
+  <div class="panel" data-panel="home">
+    <div class="grp"><button data-cmd="undo" title="실행 취소 (Ctrl+Z)">↶</button><button data-cmd="redo" title="다시 실행 (Ctrl+Y)">↷</button></div>
+    <div class="grp">
+      <select id="fontSize" title="글자 크기"><option value="">크기</option><option>9</option><option>10</option><option>11</option><option>12</option><option>14</option><option>16</option><option>18</option><option>20</option><option>24</option><option>28</option><option>36</option></select>
+      <button data-cmd="bold" title="굵게 (Ctrl+B)"><b>가</b></button>
+      <button data-cmd="italic" title="기울임 (Ctrl+I)"><i>가</i></button>
+      <button data-cmd="underline" title="밑줄 (Ctrl+U)"><u>가</u></button>
+      <button data-cmd="strikeThrough" title="취소선"><s>가</s></button>
+      <span class="drop"><button data-pop="colorPop" title="글자 색"><span class="sw-a">가</span><span class="bar" id="colorBar"></span></button>
+        <span class="pop" id="colorPop" hidden></span></span>
+      <span class="drop"><button data-pop="hlPop" title="형광펜"><span class="hl-ico">✎</span><span class="bar" id="hlBar"></span></button>
+        <span class="pop" id="hlPop" hidden></span></span>
+      <button data-cmd="removeFormat" title="서식 지우기">⌫</button>
+    </div>
+    <div class="grp">
+      <button data-cmd="insertUnorderedList" title="글머리 기호">•≡</button>
+      <button data-cmd="insertOrderedList" title="번호 목록">1≡</button>
+      <button id="btnCheck" title="할 일 (체크박스)">☑</button>
+      <button data-cmd="outdent" title="내어쓰기">⇤</button>
+      <button data-cmd="indent" title="들여쓰기">⇥</button>
+      <button data-cmd="justifyLeft" title="왼쪽 정렬">⯇</button>
+      <button data-cmd="justifyCenter" title="가운데 정렬">≡</button>
+      <button data-cmd="justifyRight" title="오른쪽 정렬">⯈</button>
+    </div>
+    <div class="grp styles">
+      <button data-block="h1" class="st-h1">제목 1</button>
+      <button data-block="h2" class="st-h2">제목 2</button>
+      <button data-block="h3" class="st-h3">제목 3</button>
+      <button data-block="p">본문</button>
+    </div>
+    <div class="grp"><button id="autoQuick" class="toggle" title="1. 이나 - 를 입력하면 목록으로 바꾸는 기능">자동 목록 <b></b></button></div>
+  </div>
+
+  <div class="panel" data-panel="insert" hidden>
+    <div class="grp"><span class="drop"><button data-pop="tablePop">▦ 표</button><span class="pop" id="tablePop" hidden><span class="tgrid" id="tgrid"></span><span class="tlabel" id="tlabel">표 만들기</span></span></span></div>
+    <div class="grp table-ops" id="tableOps">
+      <button data-table="rowAbove">위에 줄</button><button data-table="rowBelow">아래에 줄</button>
+      <button data-table="colLeft">왼쪽 칸</button><button data-table="colRight">오른쪽 칸</button>
+      <button data-table="header">머리글</button>
+      <button data-table="delRow">줄 삭제</button><button data-table="delCol">칸 삭제</button><button data-table="delTable">표 삭제</button>
+    </div>
+    <div class="grp"><button id="btnImage">🖼 그림</button><button id="btnFile">📎 파일 첨부</button></div>
+    <div class="grp"><button id="btnDate">날짜</button><button id="btnTime">시간</button><button id="btnHr">구분선</button><button id="btnLink">🔗 링크</button></div>
+  </div>
+
+  <div class="panel" data-panel="convert" hidden>
+    <div class="grp"><button class="big" data-export="hwpx" data-scope="page"><span class="fi hwp">한</span>이 페이지를 한글로</button><button class="big" data-export="hwpx" data-scope="section"><span class="fi hwp">한</span>섹션 전체를 한글로</button></div>
+    <div class="grp"><button class="big" data-export="xlsx" data-scope="page"><span class="fi xls">X</span>이 페이지를 엑셀로</button><button class="big" data-export="xlsx" data-scope="section"><span class="fi xls">X</span>섹션 전체를 엑셀로</button></div>
+    <div class="grp note" id="convertNote"></div>
+  </div>
+
+  <div class="panel" data-panel="settings" hidden>
+    <div class="grp"><button class="big" id="openSettings">⚙ 설정 열기</button><button class="big" id="openStorage">☁ 저장 위치·계정</button></div>
+  </div>
+</div>
+
+<main class="shell" id="shell" data-view="page">
+  <aside class="col col-sec" aria-label="섹션">
+    <div class="nb">
+      <button class="nb-btn" id="nbBtn"><span class="nb-ico">▤</span><span id="nbName"></span><span class="caret">▾</span></button>
+      <div class="menu" id="nbMenu" hidden></div>
+    </div>
+    <ul class="list" id="sectionList"></ul>
+    <button class="add" id="addSection">＋ 섹션 추가</button>
+  </aside>
+  <aside class="col col-pages" aria-label="페이지">
+    <div class="col-head" id="pagesHead"></div>
+    <ul class="list" id="pageList"></ul>
+    <button class="add" id="addPage">＋ 페이지 추가</button>
+  </aside>
+  <section class="canvas" id="canvas">
+    <article class="page" id="page" hidden>
+      <input class="ptitle" id="pageTitle" placeholder="제목" autocomplete="off">
+      <div class="pdate" id="pageDate"></div>
+      <div class="editor" id="editor" contenteditable="true" spellcheck="false" aria-label="페이지 내용"></div>
+    </article>
+    <div class="empty" id="empty" hidden></div>
+  </section>
+</main>
+
+<div class="imgbar" id="imgBar" hidden><button data-w="25">25%</button><button data-w="50">50%</button><button data-w="75">75%</button><button data-w="100">원래 크기</button><button data-w="del" class="danger">삭제</button></div>
+<div class="ctx" id="ctx" hidden></div>
+<div class="toast" id="toast" role="status" hidden></div>
+<div class="shade" id="shade" hidden></div>
+<div class="modal" id="modal" role="dialog" aria-modal="true" hidden></div>
+<input type="file" id="pickImage" accept="image/*" multiple hidden>
+<input type="file" id="pickFile" multiple hidden>
+</body>
+</html>
