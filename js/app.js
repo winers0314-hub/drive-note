@@ -9,7 +9,8 @@ import { msLogin, msSignedIn, listNotebooks, listPages, pageContent, convertPage
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const CLIENT_ID = (window.NOTE_CONFIG && window.NOTE_CONFIG.googleClientId || '').trim();
-const narrow = () => matchMedia('(max-width: 820px)').matches;
+const phone = () => matchMedia('(max-width: 599px)').matches;                          // 휴대폰: 한 칸씩
+const fold = () => matchMedia('(min-width: 600px) and (max-width: 1023px)').matches;  // 폴드 펼침·태블릿
 
 // ---------- 설정 (이 기기에 저장) ----------
 const DEFAULTS = { auto: true, autoNumber: true, autoBullet: true, autoCheck: true, shrink: true, exportToDrive: true, autoExport: 'none', theme: 'system', defaultLines: '', browserSpell: true };
@@ -208,7 +209,12 @@ function reselect(nbId, secId, pageId) {
   cur.page = cur.sec ? (cur.sec.pages.find(p => p.id === pageId) || null) : null;
 }
 function renderAll() { renderNotebook(); renderSections(); renderPages(); }
-function renderNotebook() { $('nbName').textContent = cur.nb ? cur.nb.name : '전자 필기장 없음'; }
+const NB_COLORS = ['#4dab9a', '#529cca', '#e255a1', '#ffa344', '#9a6dd7', '#ff7369', '#937264', '#e9c03a'];
+function renderNotebook() {
+  $('nbName').textContent = cur.nb ? cur.nb.name : '전자 필기장 없음';
+  $('secHead').textContent = cur.nb ? cur.nb.name : '';
+  $('nbList').innerHTML = ix.notebooks.map((n, i) => `<li data-id="${n.id}" class="${n === cur.nb ? 'on' : ''}"><span class="nbi" style="background:${NB_COLORS[i % NB_COLORS.length]}"></span><span class="name">${esc(n.name)}</span><button class="more" data-more="nb" aria-label="전자 필기장 메뉴">⋯</button></li>`).join('');
+}
 function renderSections() {
   const ul = $('sectionList');
   ul.innerHTML = (cur.nb?.sections || []).map(s => `<li data-id="${s.id}" class="${s === cur.sec ? 'on' : ''}" draggable="true" style="border-left-color:${s.color}"><span class="dot" style="background:${s.color}"></span><span class="name">${esc(s.name)}</span><button class="more" data-more="sec" aria-label="섹션 메뉴">⋯</button></li>`).join('');
@@ -232,9 +238,24 @@ function renderPages() {
 function showEmpty(html) { $('page').hidden = true; $('empty').hidden = false; $('empty').innerHTML = html; }
 function setView(v) {
   $('shell').dataset.view = v;
-  $('navBack').hidden = !narrow() || v === 'sections';
+  $('navBack').hidden = !phone() || v === 'sections';
 }
 $('navBack').onclick = () => setView($('shell').dataset.view === 'page' ? 'pages' : 'sections');
+
+// 목록 접기·펴기 (컴퓨터: ☰ / 전체 페이지 보기, 폴드: 글을 누르면 접히고 ☰로 다시 펼침)
+let navOff = false;
+try { navOff = localStorage.getItem('dn-nav-off') === '1'; } catch {}
+function applyNav() {
+  const off = navOff && !phone();
+  $('shell').classList.toggle('nav-off', off);
+  $('navToggle').title = off ? '목록 펴기' : '목록 접기 (전체 페이지 보기)';
+  $('navToggle').classList.toggle('on', !off);
+}
+function setNav(off) { navOff = off; try { localStorage.setItem('dn-nav-off', off ? '1' : '0'); } catch {} applyNav(); }
+$('navToggle').onclick = () => setNav(!navOff);
+$('fullView').onclick = () => setNav(true);
+$('canvas').addEventListener('click', () => { if (fold() && !navOff && cur.page) setNav(true); });
+applyNav();
 
 // ---------- 페이지 열기 ----------
 async function openPage(p, { keepScroll = false, silent = false, focusTitle = false } = {}) {
@@ -245,7 +266,7 @@ async function openPage(p, { keepScroll = false, silent = false, focusTitle = fa
   if (!p) { showEmpty(cur.sec ? '<h2>페이지가 없어요</h2><p>왼쪽 아래 <b>＋ 페이지 추가</b>를 눌러 첫 페이지를 만드세요.</p>' : '<h2>섹션이 없어요</h2><p><b>＋ 섹션 추가</b>로 섹션을 먼저 만드세요.</p>'); return; }
   $('empty').hidden = true; $('page').hidden = false;
   const top = $('canvas').scrollTop;
-  $('spell').hidden = true;
+  $('spell').hidden = true; $('ai').hidden = true;
   applyLines(p);
   $('pageTitle').value = p.title || '';
   $('pageDate').textContent = fmtFull(p.created);
@@ -265,7 +286,7 @@ async function openPage(p, { keepScroll = false, silent = false, focusTitle = fa
     toast('저장되지 않은 내용이 있어요.', [{ label: '되살리기', run: () => { $('editor').innerHTML = sanitize(draft.html); if (draft.title) $('pageTitle').value = draft.title; hydrate(); markDirty(); } }, { label: '버리기', run: () => localStorage.removeItem('dn-draft-' + p.id) }], 0);
   }
   if (keepScroll) $('canvas').scrollTop = top; else $('canvas').scrollTop = 0;
-  if (narrow()) setView('page');
+  if (phone()) setView('page');
   if (focusTitle) { $('pageTitle').focus(); }
 }
 function hydrate() {
@@ -284,7 +305,7 @@ function selectSection(sec) {
   renderSections(); renderPages();
   const first = sec?.pages[0] || null;
   openPage(first);
-  if (narrow()) setView('pages');
+  if (phone()) setView('pages');
 }
 async function addSection() {
   const name = await ask('새 섹션', '섹션 이름', '새 섹션'); if (!name) return;
@@ -318,14 +339,14 @@ $('sectionList').addEventListener('click', e => {
   const li = e.target.closest('li[data-id]'); if (!li) return;
   const sec = cur.nb.sections.find(s => s.id === li.dataset.id);
   if (e.target.closest('[data-more]')) { e.stopPropagation(); sectionMenu(sec, e.target.closest('[data-more]')); return; }
-  if (sec !== cur.sec) selectSection(sec); else if (narrow()) setView('pages');
+  if (sec !== cur.sec) selectSection(sec); else if (phone()) setView('pages');
 });
 $('pageList').addEventListener('click', e => {
   const li = e.target.closest('li[data-id]'); if (!li) return;
   const hit = findPage(li.dataset.id); if (!hit) return;
   if (e.target.closest('[data-more]')) { e.stopPropagation(); pageMenu(hit.p, e.target.closest('[data-more]')); return; }
   if (searchMode && (hit.sec !== cur.sec)) { if (cur.page) leavePage(cur.page); cur.nb = hit.nb; cur.sec = hit.sec; cur.page = null; renderNotebook(); renderSections(); }
-  if (hit.p !== cur.page) openPage(hit.p); else if (narrow()) setView('page');
+  if (hit.p !== cur.page) openPage(hit.p); else if (phone()) setView('page');
 });
 ['sectionList', 'pageList'].forEach(id => $(id).addEventListener('contextmenu', e => {
   const li = e.target.closest('li[data-id]'); if (!li) return; e.preventDefault();
@@ -433,23 +454,42 @@ $('nbBtn').onclick = () => {
 };
 $('nbMenu').onclick = async e => {
   const b = e.target.closest('button'); if (!b) return; $('nbMenu').hidden = true;
-  if (b.dataset.nb) {
-    const nb = ix.notebooks.find(n => n.id === b.dataset.nb); if (nb === cur.nb) return;
-    if (cur.page) leavePage(cur.page);
-    cur.nb = nb; cur.sec = nb.sections[0] || null; cur.page = null; searchMode = null; renderAll(); openPage(cur.sec?.pages[0] || null);
-    if (narrow()) setView('sections');
-  } else if (b.dataset.a === 'new') addNotebook();
-  else if (b.dataset.a === 'rename') { const n = await ask('전자 필기장 이름 바꾸기', '이름', cur.nb.name); if (n) { cur.nb.name = n; scheduleIndexSave(); renderNotebook(); } }
-  else if (b.dataset.a === 'del') {
-    if (ix.notebooks.length <= 1) return toast('전자 필기장이 하나뿐이라 지울 수 없어요.');
-    const pages = cur.nb.sections.flatMap(s => s.pages);
-    if (!(await confirmBox(`“${cur.nb.name}” 전자 필기장 삭제`, `섹션 ${cur.nb.sections.length}개, 페이지 ${pages.length}개가 함께 지워져요.${trashNote()}`))) return;
-    dirty = false; editedSinceOpen = false;
-    ix.notebooks.splice(ix.notebooks.indexOf(cur.nb), 1);
-    cur.nb = ix.notebooks[0]; cur.sec = cur.nb.sections[0] || null; cur.page = null;
-    scheduleIndexSave(); renderAll(); openPage(cur.sec?.pages[0] || null); trashPages(pages);
-  }
+  if (b.dataset.nb) selectNotebook(ix.notebooks.find(n => n.id === b.dataset.nb));
+  else if (b.dataset.a === 'new') addNotebook();
+  else if (b.dataset.a === 'rename') renameNotebook(cur.nb);
+  else if (b.dataset.a === 'del') deleteNotebook(cur.nb);
 };
+function selectNotebook(nb) {
+  if (!nb || nb === cur.nb) return;
+  if (cur.page) leavePage(cur.page);
+  cur.nb = nb; cur.sec = nb.sections[0] || null; cur.page = null; searchMode = null; renderAll(); openPage(cur.sec?.pages[0] || null);
+  if (phone()) setView('sections');
+}
+async function renameNotebook(nb) {
+  const n = await ask('전자 필기장 이름 바꾸기', '이름', nb.name);
+  if (n) { nb.name = n; scheduleIndexSave(); renderNotebook(); }
+}
+async function deleteNotebook(nb) {
+  if (ix.notebooks.length <= 1) return toast('전자 필기장이 하나뿐이라 지울 수 없어요.');
+  const pages = nb.sections.flatMap(s => s.pages);
+  if (!(await confirmBox(`“${nb.name}” 전자 필기장 삭제`, `섹션 ${nb.sections.length}개, 페이지 ${pages.length}개가 함께 지워져요.${trashNote()}`))) return;
+  ix.notebooks.splice(ix.notebooks.indexOf(nb), 1);
+  if (nb === cur.nb) { dirty = false; editedSinceOpen = false; cur.nb = ix.notebooks[0]; cur.sec = cur.nb.sections[0] || null; cur.page = null; openPage(cur.sec?.pages[0] || null); }
+  scheduleIndexSave(); renderAll(); trashPages(pages);
+}
+// 전자 필기장 칸 (넓은 화면)
+$('nbList').addEventListener('click', e => {
+  const li = e.target.closest('li[data-id]'); if (!li) return;
+  const nb = ix.notebooks.find(n => n.id === li.dataset.id);
+  if (e.target.closest('[data-more]')) { e.stopPropagation(); notebookMenu(nb, e.target.closest('[data-more]')); return; }
+  selectNotebook(nb);
+});
+$('nbList').addEventListener('contextmenu', e => { const li = e.target.closest('li[data-id]'); if (!li) return; e.preventDefault(); notebookMenu(ix.notebooks.find(n => n.id === li.dataset.id), { x: e.clientX, y: e.clientY }); });
+$('addNotebook').onclick = () => addNotebook();
+function notebookMenu(nb, at) {
+  const c = showCtx(`<button data-a="rename">이름 바꾸기</button><hr><button data-a="del" class="danger">전자 필기장 삭제</button>`, at);
+  c.onclick = e => { const b = e.target.closest('button'); if (!b) return; c.hidden = true; if (b.dataset.a === 'rename') renameNotebook(nb); else deleteNotebook(nb); };
+}
 
 // 끌어서 순서 바꾸기 · 페이지를 섹션으로 옮기기
 let dragItem = null;
@@ -492,7 +532,7 @@ async function runSearch(q) {
   await flush().catch(() => {});
   const k = q.toLowerCase(), list = allPages();
   const byTitle = list.filter(x => (x.p.title || '').toLowerCase().includes(k) || (x.p.snip || '').toLowerCase().includes(k)).map(x => x.p.id);
-  searchMode = { q, ids: byTitle }; renderPages(); if (narrow()) setView('pages');
+  searchMode = { q, ids: byTitle }; renderPages(); if (phone()) setView('pages');
   try {
     const more = await store.search(q, list.map(x => x.p));
     if (searchMode?.q !== q) return;
@@ -687,6 +727,116 @@ function showSpell(items) {
 }
 $('spellRun').onclick = runSpell;
 $('spellLive').onclick = () => { S.browserSpell = !S.browserSpell; saveSettings(); };
+// ---------- AI 도우미 (검토 탭): 페이지에 대해 묻기, 페이지 전체 고치기 ----------
+const AI_API = (window.NOTE_CONFIG && window.NOTE_CONFIG.aiApi) || 'api/note-ai';
+const AI_PRESETS = [
+  ['주제별로 정리', '내용을 하나도 빼지 말고 주제별로 묶어서, 주제마다 제목(h2)을 붙여 정리해 주세요. 같은 내용이 여러 번 나오면 하나로 합쳐 주세요.'],
+  ['문장 다듬기', '뜻과 내용은 그대로 두고 맞춤법, 띄어쓰기, 어색한 문장을 자연스럽게 다듬어 주세요.'],
+  ['맨 위에 요약 넣기', '맨 위에 "요약" 제목(h2)과 핵심 내용 3~5줄 글머리 기호 요약을 넣고, 나머지 내용은 그대로 두세요.'],
+  ['표로 정리', '서로 비교하거나 나열된 정보가 있으면 표로 정리해 주세요. 나머지 내용은 그대로 두세요.'],
+];
+// 그림·첨부 파일은 AI에 보내지 않고 ⟦그림1⟧ 같은 표시로 바꿨다가 되돌림
+let aiKeep = [];
+function pageForAI() {
+  const c = $('editor').cloneNode(true);
+  aiKeep = [];
+  c.querySelectorAll('img, .att').forEach(el => {
+    const k = el.cloneNode(true); if (k.tagName === 'IMG' && k.dataset.fid) k.removeAttribute('src'); k.classList.remove('sel');
+    const token = `⟦${el.tagName === 'IMG' ? '그림' : '첨부'}${aiKeep.length + 1}⟧`;
+    aiKeep.push({ token, html: k.outerHTML });
+    el.replaceWith(token);
+  });
+  return c.innerHTML;
+}
+function restoreKept(html) {
+  let out = sanitize(html), missing = 0;
+  for (const k of aiKeep) {
+    if (out.includes(k.token)) out = out.replace(k.token, k.html);
+    else { out += `<p>${k.html}</p>`; missing++; }
+  }
+  return { html: out, missing };
+}
+async function aiCall(mode, prompt) {
+  const r = await fetch(AI_API, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + store.token }, body: JSON.stringify({ mode, prompt, title: $('pageTitle').value, html: pageForAI() }) });
+  const j = await r.json().catch(() => ({}));
+  if (r.ok) return j;
+  const msg = { 503: 'AI 서버에 OpenAI 키가 설정돼 있지 않아요.', 401: '이 계정은 AI 도우미를 쓸 수 없어요. 다시 로그인해 보세요.', 413: '페이지가 너무 길어요. 페이지를 나눠서 해 보세요.', 404: 'AI 서버를 찾지 못했어요. config.js의 aiApi를 확인해 주세요.' }[r.status];
+  throw new Error(msg || 'AI 오류: ' + (j.detail || j.error || r.status));
+}
+function answerHTML(text) {
+  const lines = text.split('\n'); let html = '', list = false;
+  for (const l of lines) {
+    const m = l.match(/^\s*[-•*]\s+(.*)$/);
+    if (m) { if (!list) { html += '<ul>'; list = true; } html += `<li>${esc(m[1])}</li>`; continue; }
+    if (list) { html += '</ul>'; list = false; }
+    if (l.trim()) html += `<p>${esc(l)}</p>`;
+  }
+  return html + (list ? '</ul>' : '');
+}
+function openAI() {
+  if (!needPage()) return;
+  if (store?.kind !== 'drive') return toast('AI 도우미는 구글 드라이브로 로그인했을 때 쓸 수 있어요.');
+  $('spell').hidden = true;
+  const el = $('ai'); el.hidden = false;
+  el.innerHTML = `<div class="spell-head"><b>✨ AI 도우미</b><button id="aiClose" aria-label="닫기">✕</button></div>
+    <div class="ai-body">
+      <div class="ai-label">이 페이지를 바로 고치기</div>
+      <div class="ai-chips">${AI_PRESETS.map((p, i) => `<button data-preset="${i}">${esc(p[0])}</button>`).join('')}</div>
+      <div class="ai-label">직접 쓰기</div>
+      <textarea id="aiPrompt" rows="3" placeholder="궁금한 점을 묻거나, 원하는 걸 적어 주세요.&#10;예) 이 내용으로 발표 순서를 짜 줘&#10;예) 날짜순으로 다시 정리해 줘"></textarea>
+      <div class="ai-acts"><button class="btn" id="aiAsk" title="Ctrl+Enter">질문하기</button><button class="btn primary" id="aiEdit">이대로 페이지 고치기</button></div>
+      <div id="aiOut"></div>
+    </div>`;
+  $('aiClose').onclick = () => { el.hidden = true; };
+  const promptBox = $('aiPrompt');
+  promptBox.onkeydown = e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); run('ask', promptBox.value.trim()); } };
+  el.querySelector('.ai-chips').onclick = e => { const b = e.target.closest('[data-preset]'); if (b) run('edit', AI_PRESETS[+b.dataset.preset][1]); };
+  $('aiAsk').onclick = () => run('ask', promptBox.value.trim());
+  $('aiEdit').onclick = () => run('edit', promptBox.value.trim());
+  promptBox.focus();
+
+  const page = cur.page;
+  async function run(mode, prompt) {
+    if (!prompt) { promptBox.focus(); return toast('무엇을 할지 적어 주세요.'); }
+    if (!store.signedIn) return handleErr({ auth: true }, () => run(mode, prompt));
+    const out = $('aiOut');
+    el.querySelectorAll('button').forEach(b => { if (b.id !== 'aiClose') b.disabled = true; });
+    out.innerHTML = `<div class="spell-empty">AI가 ${mode === 'edit' ? '페이지를 고치는' : '생각하는'} 중…<br><small>긴 페이지는 30초~1분쯤 걸려요.</small></div>`;
+    try {
+      const j = await aiCall(mode, prompt);
+      if (cur.page !== page || el.hidden) return;
+      if (mode === 'ask') {
+        out.innerHTML = `<div class="ai-answer">${answerHTML(j.answer || '')}</div><div class="ai-acts"><button class="btn" id="aiCopy">복사</button><button class="btn primary" id="aiInsert">페이지 끝에 넣기</button></div>`;
+        $('aiCopy').onclick = async () => { try { await navigator.clipboard.writeText(j.answer || ''); toast('복사했어요.'); } catch { toast('복사하지 못했어요.'); } };
+        $('aiInsert').onclick = () => {
+          // 목록·표 안이 아니라 페이지 맨 아래 새 줄에 넣기
+          const ed = $('editor'), p = document.createElement('p'); p.innerHTML = '<br>'; ed.append(p);
+          const r = document.createRange(); r.selectNodeContents(p);
+          ed.focus(); selectRange(r); document.execCommand('insertHTML', false, answerHTML(j.answer || '')); markDirty();
+          toast('페이지 끝에 넣었어요.');
+        };
+      } else {
+        const { html, missing } = restoreKept(j.html || '');
+        out.innerHTML = `${j.note ? `<p class="ai-note">${esc(j.note)}</p>` : ''}${missing ? `<p class="ai-note warn">그림·첨부 ${missing}개는 맨 아래에 붙였어요.</p>` : ''}
+          <div class="ai-label">미리 보기</div><div class="ai-preview editor">${html}</div>
+          <div class="ai-acts"><button class="btn" id="aiDiscard">버리기</button><button class="btn primary" id="aiApply">페이지에 적용</button></div>
+          <p class="ai-hint">적용한 뒤에도 Ctrl+Z로 되돌릴 수 있어요.</p>`;
+        out.querySelectorAll('img[data-fid]').forEach(async img => { const u = await fileURL(img.dataset.fid).catch(() => ''); if (u) img.src = u; });
+        $('aiDiscard').onclick = () => { out.innerHTML = ''; };
+        $('aiApply').onclick = () => {
+          if (cur.page !== page) return toast('다른 페이지로 바뀌어서 적용하지 않았어요.');
+          const ed = $('editor'), r = document.createRange(); r.selectNodeContents(ed);
+          ed.focus(); selectRange(r); document.execCommand('insertHTML', false, html);
+          hydrate(); markDirty();
+          out.innerHTML = '<p class="ai-note">페이지에 적용했어요. 되돌리려면 Ctrl+Z를 누르세요.</p>';
+        };
+      }
+    } catch (e) { out.innerHTML = `<p class="ai-note warn">${esc(e.message || 'AI 도우미가 답하지 못했어요.')}</p>`; }
+    finally { el.querySelectorAll('button').forEach(b => { b.disabled = false; }); }
+  }
+}
+$('aiOpen').onclick = openAI;
+
 
 // ---------- 한글·엑셀 변환 ----------
 async function pagesFor(scope, page = cur.page) {
@@ -823,7 +973,7 @@ async function load() {
   let last = {}; try { last = JSON.parse(localStorage.getItem('dn-last') || '{}'); } catch {}
   reselect(last.nb, last.sec, last.page);
   if (!cur.page && cur.sec) cur.page = cur.sec.pages[0] || null;
-  renderAll(); applySettings(); setView(narrow() && !cur.page ? 'sections' : 'page');
+  renderAll(); applySettings(); setView(phone() && !cur.page ? 'sections' : 'page');
   await openPage(cur.page);
   $('account').textContent = store.kind === 'drive' ? '☁ 구글 드라이브' : '💾 이 기기 (체험)';
   status('ok');
@@ -1023,7 +1173,7 @@ setupEditor($('editor'), {
     [{ label: '되돌리기', run: undo }, { label: '자동 목록 끄기', run: () => { S.auto = false; saveSettings(); undo(); toast('자동 목록을 껐어요. 설정이나 홈 탭에서 다시 켤 수 있어요.'); } }]),
 });
 applySettings();
-matchMedia('(max-width: 820px)').addEventListener('change', () => setView($('shell').dataset.view));
+matchMedia('(max-width: 599px)').addEventListener('change', () => { setView($('shell').dataset.view); applyNav(); });
 const mode = localStorage.getItem('dn-mode');
 if (mode === 'drive' && CLIENT_ID) startDrive(false);
 else if (mode === 'local') startLocal();

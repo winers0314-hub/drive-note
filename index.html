@@ -21,6 +21,7 @@
 <body>
 <header class="titlebar">
   <button class="tb-btn only-narrow" id="navBack" aria-label="뒤로" hidden>‹</button>
+  <button class="tb-btn wide-only" id="navToggle" title="목록 접기 (전체 페이지 보기)" aria-label="목록 접기·펴기">☰</button>
   <div class="brand"><span class="logo">S</span><span class="brand-name">에스 노트</span></div>
   <label class="search"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="M13 13l4 4"/></svg><input id="search" type="search" placeholder="모든 노트 검색" autocomplete="off"></label>
   <span class="sync" id="sync" role="status"></span>
@@ -83,11 +84,12 @@
 
   <div class="panel" data-panel="view" hidden>
     <div class="grp"><span class="grp-label">노트선</span><button data-lines="" title="노트선 없음">없음</button><button data-lines="narrow" title="좁은 줄"><span class="ln-ico n"></span>좁은 줄</button><button data-lines="wide" title="넓은 줄"><span class="ln-ico w"></span>넓은 줄</button><button data-lines="grid" title="모눈"><span class="ln-ico g"></span>모눈</button></div>
+    <div class="grp"><button id="fullView" title="목록을 접고 글만 크게 봐요">⤢ 전체 페이지 보기</button></div>
     <div class="grp"><button id="linesDefault" class="toggle" title="새로 만드는 페이지에 지금 노트선을 기본으로 씀">새 페이지에도 쓰기 <b></b></button></div>
   </div>
 
   <div class="panel" data-panel="review" hidden>
-    <div class="grp"><button class="big" id="spellRun">✓ 맞춤법 검사</button></div>
+    <div class="grp"><button class="big" id="aiOpen">✨ AI 도우미</button><button class="big" id="spellRun">✓ 맞춤법 검사</button></div>
     <div class="grp"><button id="spellLive" class="toggle" title="입력하는 동안 브라우저가 틀린 낱말에 빨간 밑줄을 그어요">입력할 때 빨간 밑줄 <b></b></button></div>
     <div class="grp note">맞춤법 검사는 AI가 이 페이지의 맞춤법·띄어쓰기·문법 오류를 찾아요. 고칠지는 하나씩 고르거나 한 번에 고칠 수 있어요.</div>
   </div>
@@ -105,11 +107,17 @@
 </div>
 
 <main class="shell" id="shell" data-view="page">
+  <aside class="col col-nb wide-only" aria-label="전자 필기장">
+    <div class="col-head">전자 필기장</div>
+    <ul class="list" id="nbList"></ul>
+    <button class="add" id="addNotebook">＋ 전자 필기장</button>
+  </aside>
   <aside class="col col-sec" aria-label="섹션">
     <div class="nb">
       <button class="nb-btn" id="nbBtn"><span class="nb-ico">▤</span><span id="nbName"></span><span class="caret">▾</span></button>
       <div class="menu" id="nbMenu" hidden></div>
     </div>
+    <div class="col-head wide-only" id="secHead"></div>
     <ul class="list" id="sectionList"></ul>
     <button class="add" id="addSection">＋ 섹션 추가</button>
   </aside>
@@ -129,6 +137,7 @@
 </main>
 
 <aside class="spell" id="spell" hidden aria-label="맞춤법 검사 결과"></aside>
+<aside class="spell ai" id="ai" hidden aria-label="AI 도우미"></aside>
 <div class="imgbar" id="imgBar" hidden><button data-w="25">25%</button><button data-w="50">50%</button><button data-w="75">75%</button><button data-w="100">원래 크기</button><button data-w="del" class="danger">삭제</button></div>
 <div class="ctx" id="ctx" hidden></div>
 <div class="toast" id="toast" role="status" hidden></div>
