@@ -24,6 +24,7 @@ export function setupEditor(editor, options) {
     changed();
   });
   document.addEventListener('selectionchange', () => opt.onSelection?.());
+  setupLongPressHighlight();
   window.addEventListener('resize', () => selImg && placeImgBar());
   document.getElementById('canvas').addEventListener('scroll', () => selImg && placeImgBar(), { passive: true });
 }
@@ -43,10 +44,14 @@ export function fontSize(pt) {
   ed.focus();
   document.execCommand('styleWithCSS', false, false);
   document.execCommand('fontSize', false, '7');
+  const made = [];
   ed.querySelectorAll('font[size="7"]').forEach(f => {
     const s = document.createElement('span'); s.style.fontSize = pt + 'pt';
-    s.append(...f.childNodes); f.replaceWith(s);
+    s.append(...f.childNodes); f.replaceWith(s); made.push(s);
+    s.querySelectorAll('span[style*="font-size"]').forEach(x => { x.style.fontSize = ''; if (!x.getAttribute('style')) x.replaceWith(...x.childNodes); }); // 안쪽 예전 크기는 지움
   });
+  // 바꾼 글을 계속 골라 둠 (크기를 한 단계씩 더 바꿀 수 있게)
+  if (made.length) { const r = document.createRange(); r.setStartBefore(made[0]); r.setEndAfter(made[made.length - 1]); const s = sel(); s.removeAllRanges(); s.addRange(r); }
   changed();
 }
 export function insertHTML(html) { ed.focus(); document.execCommand('insertHTML', false, html); changed(); }
@@ -70,7 +75,7 @@ function closest(sel_) {
 export const caretIn = s => closest(s);
 
 // ---------- 자동 서식 ----------
-// "1. " "1) " → 번호 목록, "- " "* " "• " → 글머리 기호, "[] " "[ ] " → 할 일
+// "1. " "1) " → 번호 목록, "- " → 대시 목록, "* " "• " → 동그라미 목록, "[] " "[ ] " → 할 일
 function onInput(e) {
   if (selImg && !ed.contains(selImg)) hideImgBar();
   changed();
@@ -78,19 +83,30 @@ function onInput(e) {
     const li = closest('ul.checklist > li'); if (li) li.removeAttribute('data-checked');
     return;
   }
-  if (e.inputType !== 'insertText' || (e.data !== ' ' && e.data !== ' ')) return;
+  if (e.inputType !== 'insertText' || (e.data !== ' ' && e.data !== '\u00a0')) return;
   const set = opt.settings();
   if (!set.auto) return;
   const s = sel(); if (!s.rangeCount || !s.isCollapsed) return;
-  if (closest('li, td, th, pre')) return;
-  const block = closest('p, div, h1, h2, h3, blockquote') || ed;
+  if (closest('td, th, pre')) return;
+  const li0 = closest('li');
+  const block = li0 || closest('p, div, h1, h2, h3, blockquote') || ed;
   const r = document.createRange(); r.setStart(block, 0); r.setEnd(s.anchorNode, s.anchorOffset);
-  const typed = r.toString().replace(/ /g, ' ');
+  const typed = r.toString().replace(/\u00a0/g, ' ');
+  // "1. " → 번호, "- " → 대시(-), "* " "• " → 동그라미, "[] " → 할 일
   let kind = null, start = 1, m;
   if (set.autoNumber && (m = typed.match(/^(\d{1,3})[.)] $/))) { kind = 'ol'; start = +m[1]; }
-  else if (set.autoBullet && /^[-*•] $/.test(typed)) kind = 'ul';
+  else if (set.autoBullet && typed === '- ') kind = 'dash';
+  else if (set.autoBullet && /^[*•] $/.test(typed)) kind = 'ul';
   else if (set.autoCheck && /^\[ ?\] $/.test(typed)) kind = 'check';
   if (!kind) return;
+  if (li0) { // 목록 안의 새 줄: 그 줄만 다른 목록으로 (예: "2." 줄에서 "- " → 대시 줄)
+    const pl = li0.parentNode;
+    const now = pl.tagName === 'OL' ? 'ol' : pl.classList.contains('checklist') ? 'check' : pl.classList.contains('dash') ? 'dash' : 'ul';
+    if (now === kind) return;
+    s.removeAllRanges(); s.addRange(r); document.execCommand('delete');
+    switchListItem(li0, kind, start);
+    changed(); return;
+  }
   s.removeAllRanges(); s.addRange(r);
   document.execCommand('delete');
   document.execCommand(kind === 'ol' ? 'insertOrderedList' : 'insertUnorderedList');
@@ -102,10 +118,35 @@ function onInput(e) {
     if (li) { const r2 = document.createRange(); r2.selectNodeContents(li); r2.collapse(true); s.removeAllRanges(); s.addRange(r2); }
   }
   if (list && kind === 'ol' && start !== 1) list.setAttribute('start', start);
-  if (list && kind === 'check') list.classList.add('checklist');
+  // 크롬이 바로 위의 다른 종류 목록에 합쳐 버린 경우: 이 줄만 떼어 냄
+  const liNew = closest('li');
+  if (list && liNew && list.children.length > 1 && listKind(list) !== kind && !(kind === 'ul' && listKind(list) === 'ul')) {
+    switchListItem(liNew, kind, start);
+  } else {
+    if (list && kind === 'check') list.classList.add('checklist');
+    if (list && kind === 'dash') list.classList.add('dash');
+  }
   lastAuto = { li: closest('li'), text: typed, kind };
   opt.onAuto?.(kind, undoAuto);
   changed();
+}
+const listKind = l => l.tagName === 'OL' ? 'ol' : l.classList.contains('checklist') ? 'check' : l.classList.contains('dash') ? 'dash' : 'ul';
+// 목록의 한 줄만 다른 종류의 목록으로 떼어 냄 (앞뒤 줄은 원래 목록 그대로)
+function switchListItem(li, kind, start) {
+  const list = li.parentNode, items = [...list.children], i = items.indexOf(li), after = items.slice(i + 1);
+  const nl = document.createElement(kind === 'ol' ? 'ol' : 'ul');
+  if (kind === 'dash') nl.className = 'dash'; if (kind === 'check') nl.className = 'checklist';
+  if (kind === 'ol' && start !== 1) nl.setAttribute('start', start);
+  list.after(nl); nl.append(li);
+  if (after.length) {
+    const rest = list.cloneNode(false);
+    if (list.tagName === 'OL') rest.setAttribute('start', (parseInt(list.getAttribute('start'), 10) || 1) + i);
+    nl.after(rest); rest.append(...after);
+  }
+  if (!list.children.length) list.remove();
+  if (!li.textContent && !li.querySelector('br')) li.innerHTML = '<br>';
+  const r = document.createRange(); r.selectNodeContents(li); r.collapse(true);
+  const s = sel(); s.removeAllRanges(); s.addRange(r);
 }
 // 자동으로 바뀐 것 되돌리기 (바로 다음 백스페이스 또는 알림의 [되돌리기])
 export function undoAuto() {
@@ -114,6 +155,7 @@ export function undoAuto() {
   const r = document.createRange(); r.selectNodeContents(a.li); r.collapse(true);
   const s = sel(); s.removeAllRanges(); s.addRange(r);
   ed.focus();
+  a.li.parentNode.classList.remove('dash');
   document.execCommand(a.kind === 'ol' ? 'insertOrderedList' : 'insertUnorderedList');
   document.execCommand('insertText', false, a.text);
   changed();
@@ -161,6 +203,52 @@ function placeImgBar() {
 }
 export function hideImgBar() { if (selImg) selImg.classList.remove('sel'); selImg = null; if (imgBar) imgBar.hidden = true; }
 
+// ---------- 꾹 눌러 끌면 형광펜 (휴대폰·태블릿) ----------
+// 시작점을 꾹 누르면 진동 → 그대로 끌면 노란 형광펜이 칠해짐
+function setupLongPressHighlight() {
+  const pv = document.getElementById('hlPreview');
+  let st = null;
+  const at = (x, y) => document.caretRangeFromPoint ? document.caretRangeFromPoint(x, y) : null;
+  const rangeTo = (x, y) => {
+    const end = at(x, y); if (!end || !ed.contains(end.startContainer)) return null;
+    const r = document.createRange();
+    if (st.start.compareBoundaryPoints(Range.START_TO_START, end) <= 0) { r.setStart(st.start.startContainer, st.start.startOffset); r.setEnd(end.startContainer, end.startOffset); }
+    else { r.setStart(end.startContainer, end.startOffset); r.setEnd(st.start.startContainer, st.start.startOffset); }
+    return r;
+  };
+  const draw = r => { pv.innerHTML = r ? [...r.getClientRects()].map(b => `<i style="left:${b.left}px;top:${b.top}px;width:${b.width}px;height:${b.height}px"></i>`).join('') : ''; };
+  const stop = () => { if (st) clearTimeout(st.timer); st = null; ed.classList.remove('hl-mode'); pv.innerHTML = ''; };
+  ed.addEventListener('touchstart', e => {
+    if (e.touches.length !== 1) return stop();
+    const t = e.touches[0];
+    st = { x: t.clientX, y: t.clientY, active: false, range: null };
+    st.timer = setTimeout(() => {
+      if (!st) return;
+      st.start = at(st.x, st.y); if (!st.start || !ed.contains(st.start.startContainer)) return stop();
+      st.active = true; ed.classList.add('hl-mode'); navigator.vibrate?.(30);
+      getSelection().removeAllRanges();
+    }, 450);
+  }, { passive: true });
+  ed.addEventListener('touchmove', e => {
+    if (!st) return;
+    const t = e.touches[0];
+    if (!st.active) { if (Math.hypot(t.clientX - st.x, t.clientY - st.y) > 10) stop(); return; } // 그냥 스크롤
+    e.preventDefault();
+    st.range = rangeTo(t.clientX, t.clientY); draw(st.range);
+  }, { passive: false });
+  const end = () => {
+    if (!st) return;
+    const r = st.active && st.range && !st.range.collapsed ? st.range : null;
+    stop();
+    if (!r) return;
+    ed.focus(); const s = sel(); s.removeAllRanges(); s.addRange(r);
+    exec('hiliteColor', '#fff176');
+    s.collapseToEnd();
+  };
+  ed.addEventListener('touchend', end); ed.addEventListener('touchcancel', stop);
+  ed.addEventListener('contextmenu', e => { if (st?.active) e.preventDefault(); });
+}
+
 // ---------- 표 ----------
 export function tableHTML(rows, cols) {
   const tr = '<tr>' + '<td><br></td>'.repeat(cols) + '</tr>';
@@ -202,9 +290,25 @@ async function onPaste(e) {
   if (html) {
     e.preventDefault();
     const clean = sanitize(html.replace(/<!--StartFragment-->|<!--EndFragment-->/g, ''), { keepFiles: false });
-    document.execCommand('insertHTML', false, clean);
+    if (clean.length > 60000) insertFast(clean); // 아주 큰 글은 한 번에 넣어서 멈추지 않게
+    else document.execCommand('insertHTML', false, clean);
+    changed();
+    return;
+  }
+  const text = e.clipboardData?.getData('text/plain') || '';
+  if (text.length > 60000) {
+    e.preventDefault();
+    const esc = t => t.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+    insertFast(text.split(/\r?\n/).map(l => `<p>${esc(l) || '<br>'}</p>`).join(''));
     changed();
   }
+}
+function insertFast(html) {
+  const s = sel(); if (!s.rangeCount) return;
+  const r = s.getRangeAt(0); r.deleteContents();
+  const frag = r.createContextualFragment(html), last = frag.lastChild;
+  r.insertNode(frag);
+  if (last) { const r2 = document.createRange(); r2.setStartAfter(last); r2.collapse(true); s.removeAllRanges(); s.addRange(r2); }
 }
 async function onDrop(e) {
   const files = [...(e.dataTransfer?.files || [])];

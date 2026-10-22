@@ -76,7 +76,7 @@ export function toLines(root) {
         let k = ordered ? (parseInt(n.getAttribute('start'), 10) || 1) : 0;
         for (const li of n.children) {
           if (li.tagName !== 'LI') continue;
-          cur = prefix + (check ? (li.hasAttribute('data-checked') ? '☑ ' : '☐ ') : ordered ? (k++) + '. ' : '• ');
+          cur = prefix + (check ? (li.hasAttribute('data-checked') ? '☑ ' : '☐ ') : ordered ? (k++) + '. ' : n.classList.contains('dash') ? '- ' : '• ');
           walk(li, prefix + '    '); end();
         }
         continue;
@@ -113,7 +113,7 @@ export function sanitize(html, { keepFiles = true } = {}) {
         const ok = (name === 'style') || (name === 'href' && tag === 'a' && /^(https?:|mailto:)/i.test(a.value)) ||
           (name === 'src' && tag === 'img' && /^(https?:|data:image\/|blob:)/i.test(a.value)) ||
           (name === 'start' && tag === 'ol') || (name === 'color' && tag === 'font') || (name === 'align') ||
-          (name === 'class' && /^(checklist|att)$/.test(a.value)) || (name === 'data-checked' && tag === 'li') ||
+          (name === 'class' && /^(checklist|att|dash)$/.test(a.value)) || (name === 'data-checked' && tag === 'li') ||
           (keepFiles && /^data-(fid|name|size)$/.test(name)) || (name === 'contenteditable' && n.classList.contains('att'));
         if (!ok) n.removeAttribute(a.name);
       }

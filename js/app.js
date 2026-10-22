@@ -21,7 +21,7 @@ function applySettings() {
   if (S.theme === 'system') document.documentElement.removeAttribute('data-theme'); else document.documentElement.dataset.theme = S.theme;
   const q = $('autoQuick'); q.classList.toggle('is-on', S.auto); q.querySelector('b').textContent = S.auto ? '켬' : '끔';
   const sp = $('spellLive'); sp.classList.toggle('is-on', S.browserSpell); sp.querySelector('b').textContent = S.browserSpell ? '켬' : '끔';
-  $('editor').setAttribute('spellcheck', S.browserSpell ? 'true' : 'false');
+  updateSpellAttr();
   updateLinesUI();
   applyWrap();
   $('convertNote').textContent = store?.kind === 'drive'
@@ -37,6 +37,7 @@ let dirty = false, editedSinceOpen = false, saveTimer = 0, indexTimer = 0, savin
 let searchMode = null; // {q, ids}
 const imgURL = new Map(); // fid → blob URL
 
+const openNbs_ = () => ix.notebooks.filter(n => !n.closed); // 닫지 않은 전자 필기장
 const allSections = () => ix.notebooks.flatMap(nb => nb.sections.map(sec => ({ nb, sec })));
 const allPages = () => allSections().flatMap(({ nb, sec }) => sec.pages.map(p => ({ nb, sec, p })));
 const findPage = id => allPages().find(x => x.p.id === id);
@@ -71,6 +72,18 @@ const ask = (title, label, value = '') => new Promise(res => {
     setTimeout(() => m.querySelector('#askIn').select(), 0);
   });
 });
+// 지우기는 "삭제하겠습니다"를 그대로 입력해야 됨
+const DEL_WORD = '삭제하겠습니다';
+const confirmDelete = (title, body) => new Promise(res => {
+  modal(`<h2>${esc(title)}</h2><p>${body}</p><p>지우려면 아래 칸에 <b>${DEL_WORD}</b>를 그대로 입력하세요.</p><input type="text" id="delIn" placeholder="${DEL_WORD}" autocomplete="off" autofocus><div class="row"><button class="btn" id="cNo">취소</button><button class="btn danger" id="cYes" disabled>삭제</button></div>`, m => {
+    const inp = m.querySelector('#delIn'), yes = m.querySelector('#cYes');
+    const ok = () => inp.value.replace(/\s/g, '') === DEL_WORD;
+    inp.oninput = () => { yes.disabled = !ok(); };
+    inp.onkeydown = e => { if (e.key === 'Enter' && ok()) yes.click(); };
+    yes.onclick = () => { if (!ok()) return; closeModal(); res(true); };
+    m.querySelector('#cNo').onclick = () => { closeModal(); res(false); };
+  });
+});
 const confirmBox = (title, body, yes = '삭제', danger = true) => new Promise(res => {
   modal(`<h2>${esc(title)}</h2><p>${body}</p><div class="row"><button class="btn" id="cNo">취소</button><button class="btn ${danger ? 'danger' : 'primary'}" id="cYes">${esc(yes)}</button></div>`, m => {
     m.querySelector('#cYes').onclick = () => { closeModal(); res(true); };
@@ -87,7 +100,14 @@ function handleErr(e, retry) {
   } else if (e.offline) { status('offline'); setTimeout(() => retry?.(), 15000); }
   else { status('err'); toast(e.message || '저장하지 못했어요.', retry ? [{ label: '다시 시도', run: retry }] : [], 8000); }
 }
-addEventListener('online', () => { if (dirty) savePageNow(); if (indexPending) saveIndexNow(); });
+addEventListener('online', async () => {
+  if (dirty) savePageNow(); if (indexPending) saveIndexNow();
+  if (store?.kind === 'drive' && ix) {
+    store.offline = false; status('ok');
+    try { const n = await store.flushPending(id => findPage(id)?.p); if (n) { scheduleIndexSave(); toast(`인터넷이 다시 연결돼서 페이지 ${n}개를 드라이브에 올렸어요.`); } } catch {}
+  }
+});
+addEventListener('offline', () => { if (store?.kind === 'drive') status('', '⚠ 오프라인 · 이 기기에 저장 중'); });
 
 // ---------- 저장 ----------
 function scheduleIndexSave() { indexPending = true; clearTimeout(indexTimer); indexTimer = setTimeout(saveIndexNow, 700); }
@@ -103,12 +123,17 @@ function saveIndexNow() {
   return saving;
 }
 function serialize() {
-  const c = $('editor').cloneNode(true);
+  const ed = $('editor');
+  if (!ed.querySelector('img, .sel')) return ed.innerHTML; // 그림이 없으면 그대로
+  const c = ed.cloneNode(true);
   c.querySelectorAll('img[data-fid]').forEach(i => i.removeAttribute('src'));
   c.querySelectorAll('.sel').forEach(i => i.classList.remove('sel'));
   return c.innerHTML;
 }
+// 브라우저 빨간 밑줄은 글이 아주 길면 꺼서 입력이 느려지지 않게
+function updateSpellAttr() { $('editor').setAttribute('spellcheck', S.browserSpell && $('editor').textContent.length < 30000 ? 'true' : 'false'); }
 function plain(html) { return toLines(parseHTML(html)).lines.join(' ').replace(/\s+/g, ' ').trim(); }
+const pageSnip = () => $('editor').innerText.slice(0, 300).replace(/\s+/g, ' ').trim().slice(0, 80);
 function markDirty() {
   if (!cur.page) return;
   dirty = true; editedSinceOpen = true; status('edit');
@@ -119,14 +144,14 @@ let draftTimer = 0;
 function saveDraftSoon() {
   clearTimeout(draftTimer);
   const p = cur.page;
-  draftTimer = setTimeout(() => { try { localStorage.setItem('dn-draft-' + p.id, JSON.stringify({ t: Date.now(), title: $('pageTitle').value, html: serialize() })); } catch {} }, 400);
+  draftTimer = setTimeout(() => { try { const html = serialize(); if (html.length < 1.5e6) localStorage.setItem('dn-draft-' + p.id, JSON.stringify({ t: Date.now(), title: $('pageTitle').value, html })); } catch {} }, 1500);
 }
 function savePageNow() {
   clearTimeout(saveTimer);
   if (!dirty || !cur.page) return saving;
   const p = cur.page, html = serialize(), at = Date.now();
   dirty = false;
-  p.title = $('pageTitle').value.trim(); p.updated = at; p.snip = plain(html).slice(0, 80);
+  p.title = $('pageTitle').value.trim(); p.updated = at; p.snip = pageSnip(); updateSpellAttr();
   renderPages();
   saving = saving.then(async () => {
     try {
@@ -146,7 +171,7 @@ addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key.toLower
 // ---------- 다른 기기에서 바뀐 것 반영 ----------
 let lastCheck = 0;
 async function checkRemote() {
-  if (!store || store.kind !== 'drive' || !store.signedIn || Date.now() - lastCheck < 5000 || indexPending) return;
+  if (!store || store.kind !== 'drive' || !navigator.onLine || Date.now() - lastCheck < 5000 || indexPending) return;
   lastCheck = Date.now();
   try {
     if (!(await store.remoteChanged())) return;
@@ -221,6 +246,7 @@ function renderNotebook() {
   $('secHead').textContent = cur.nb ? cur.nb.name : '';
   if (cur.nb && !curCollapsed) openNbs.add(cur.nb.id);
   $('nbList').innerHTML = ix.notebooks.map((n, i) => {
+    if (n.closed) return '';
     const open = openNbs.has(n.id);
     return `<li data-id="${n.id}" class="nb-item${n === cur.nb ? ' on' : ''}${open ? ' open' : ''}"><button class="chev" data-chev aria-label="${open ? '접기' : '펼치기'}">›</button><span class="nbi" style="background:${NB_COLORS[i % NB_COLORS.length]}"></span><span class="name">${esc(n.name)}</span><button class="more" data-more="nb" aria-label="전자 필기장 메뉴">⋯</button></li>` +
       (open ? n.sections.map(s => `<li data-sec="${s.id}" data-nb="${n.id}" class="tree-sec${s === cur.sec ? ' on' : ''}"><span class="bar" style="background:${s.color}"></span><span class="name">${esc(s.name)}</span><button class="more" data-more="sec" aria-label="섹션 메뉴">⋯</button></li>`).join('') +
@@ -295,7 +321,7 @@ async function openPage(p, { keepScroll = false, silent = false, focusTitle = fa
   $('empty').hidden = true; $('page').hidden = false;
   const top = $('canvas').scrollTop;
   $('spell').hidden = true; $('ai').hidden = true;
-  applyLines(p);
+  applyLines(p); applyPageWidth(p);
   $('pageTitle').value = p.title || '';
   $('pageDate').textContent = fmtFull(p.created);
   $('editor').innerHTML = '';
@@ -307,6 +333,7 @@ async function openPage(p, { keepScroll = false, silent = false, focusTitle = fa
   // 저장되지 않은 임시 내용이 있으면 되살리기 제안
   let draft = null; try { draft = JSON.parse(localStorage.getItem('dn-draft-' + p.id) || 'null'); } catch {}
   $('editor').innerHTML = sanitize(html) || '<p><br></p>';
+  updateSpellAttr();
   dirty = false; editedSinceOpen = false;
   status('ok');
   hydrate();
@@ -333,6 +360,7 @@ function selectSection(sec) {
   renderSections(); renderPages();
   const first = sec?.pages[0] || null;
   openPage(first);
+  prefetchSection(sec);
   if (phone()) setView('pages');
 }
 async function addSection() {
@@ -412,7 +440,7 @@ function sectionMenu(sec, at) {
     else if (b.dataset.a === 'up' || b.dataset.a === 'down') { const j = i + (b.dataset.a === 'up' ? -1 : 1); cur.nb.sections.splice(i, 1); cur.nb.sections.splice(j, 0, sec); }
     else if (b.dataset.a === 'move') { const to = await pickNotebook(cur.nb); if (!to) return; cur.nb.sections.splice(cur.nb.sections.indexOf(sec), 1); to.sections.push(sec); if (cur.sec === sec) { cur.nb = to; renderNotebook(); } }
     else if (b.dataset.a === 'del') {
-      if (!(await confirmBox(`“${sec.name}” 섹션 삭제`, `이 섹션의 페이지 ${sec.pages.length}개도 함께 지워져요.${trashNote()}`))) return;
+      if (!(await confirmDelete(`“${sec.name}” 섹션 삭제`, `이 섹션의 페이지 ${sec.pages.length}개도 함께 지워져요.${trashNote()}`))) return;
       cur.nb.sections.splice(cur.nb.sections.indexOf(sec), 1);
       if (cur.sec === sec) { dirty = false; cur.page = null; cur.sec = cur.nb.sections[0] || null; openPage(cur.sec?.pages[0] || null); }
       trashPages(sec.pages);
@@ -422,13 +450,18 @@ function sectionMenu(sec, at) {
 }
 function pageMenu(p, at) {
   const sec = cur.sec.pages.includes(p) ? cur.sec : findPage(p.id).sec, i = sec.pages.indexOf(p);
-  const c = showCtx(`<button data-a="sub">${p.level ? '하위 페이지 해제' : '하위 페이지로 만들기'}</button><button data-a="child">아래에 하위 페이지 추가</button>
+  const c = showCtx(`<button data-a="rename">이름 바꾸기</button><button data-a="sub">${p.level ? '하위 페이지 해제' : '하위 페이지로 만들기'}</button><button data-a="child">아래에 하위 페이지 추가</button>
     <button data-a="up" ${i ? '' : 'disabled'}>위로</button><button data-a="down" ${i < sec.pages.length - 1 ? '' : 'disabled'}>아래로</button>
     <button data-a="move">다른 섹션으로 옮기기</button><button data-a="copy">복사본 만들기</button><hr><button data-a="del" class="danger">페이지 삭제</button>`, at);
   c.onclick = async e => {
     const b = e.target.closest('button'); if (!b) return; c.hidden = true;
     const a = b.dataset.a;
-    if (a === 'sub') p.level = p.level ? 0 : 1;
+    if (a === 'rename') {
+      const n = await ask('페이지 이름 바꾸기', '페이지 제목', p.title || ''); if (n === null) return;
+      p.title = n;
+      if (p === cur.page) { $('pageTitle').value = n; markDirty(); }
+    }
+    else if (a === 'sub') p.level = p.level ? 0 : 1;
     else if (a === 'child') { addPage(p, 1); return; }
     else if (a === 'up' || a === 'down') { sec.pages.splice(i, 1); sec.pages.splice(i + (a === 'up' ? -1 : 1), 0, p); }
     else if (a === 'move') {
@@ -445,7 +478,7 @@ function pageMenu(p, at) {
       try { await store.savePage(np, html); } catch (er) { handleErr(er); }
     }
     else if (a === 'del') {
-      if (!(await confirmBox(`“${p.title || '제목 없음'}” 페이지 삭제`, `이 페이지를 지울까요?${trashNote()}`))) return;
+      if (!(await confirmDelete(`“${p.title || '제목 없음'}” 페이지 삭제`, `이 페이지를 지울까요?${trashNote()}`))) return;
       sec.pages.splice(sec.pages.indexOf(p), 1);
       if (p === cur.page) { dirty = false; editedSinceOpen = false; cur.page = null; openPage(sec.pages[Math.min(i, sec.pages.length - 1)] || null); }
       trashPages([p]);
@@ -455,7 +488,7 @@ function pageMenu(p, at) {
 }
 function pickSection(from) {
   return new Promise(res => {
-    const opts = allSections().filter(x => x.sec !== from);
+    const opts = allSections().filter(x => x.sec !== from && !x.nb.closed);
     if (!opts.length) { toast('옮길 다른 섹션이 없어요.'); return res(null); }
     modal(`<h2>어느 섹션으로 옮길까요?</h2>${opts.map((x, k) => `<button class="choice" data-k="${k}"><b><span style="color:${x.sec.color}">■</span> ${esc(x.sec.name)}</b><small>${esc(x.nb.name)}</small></button>`).join('')}<div class="row"><button class="btn" id="pNo">취소</button></div>`, m => {
       m.onclick = e => { const b = e.target.closest('[data-k]'); if (b) { closeModal(); res(opts[+b.dataset.k].sec); } else if (e.target.id === 'pNo') { closeModal(); res(null); } };
@@ -464,7 +497,7 @@ function pickSection(from) {
 }
 function pickNotebook(from) {
   return new Promise(res => {
-    const opts = ix.notebooks.filter(n => n !== from);
+    const opts = openNbs_().filter(n => n !== from);
     if (!opts.length) { toast('다른 전자 필기장이 없어요. 먼저 새 전자 필기장을 만드세요.'); return res(null); }
     modal(`<h2>어느 전자 필기장으로 옮길까요?</h2>${opts.map((n, k) => `<button class="choice" data-k="${k}"><b>${esc(n.name)}</b><small>섹션 ${n.sections.length}개</small></button>`).join('')}<div class="row"><button class="btn" id="pNo">취소</button></div>`, m => {
       m.onclick = e => { const b = e.target.closest('[data-k]'); if (b) { closeModal(); res(opts[+b.dataset.k]); } else if (e.target.id === 'pNo') { closeModal(); res(null); } };
@@ -476,8 +509,8 @@ function pickNotebook(from) {
 $('nbBtn').onclick = () => {
   const m = $('nbMenu');
   if (!m.hidden) { m.hidden = true; return; }
-  m.innerHTML = ix.notebooks.map(n => `<button data-nb="${n.id}" class="${n === cur.nb ? 'on' : ''}">▤ ${esc(n.name)}</button>`).join('') +
-    `<hr><button data-a="new">＋ 새 전자 필기장</button><button data-a="rename">이 전자 필기장 이름 바꾸기</button><button data-a="del" class="danger">이 전자 필기장 삭제</button>`;
+  m.innerHTML = openNbs_().map(n => `<button data-nb="${n.id}" class="${n === cur.nb ? 'on' : ''}">▤ ${esc(n.name)}</button>`).join('') +
+    `<hr><button data-a="new">＋ 새 전자 필기장</button><button data-a="open">📂 전자 필기장 열기·가져오기</button><button data-a="rename">이 전자 필기장 이름 바꾸기</button><button data-a="close">이 전자 필기장 닫기</button><button data-a="del" class="danger">이 전자 필기장 삭제</button>`;
   m.hidden = false;
 };
 $('nbMenu').onclick = async e => {
@@ -485,6 +518,8 @@ $('nbMenu').onclick = async e => {
   if (b.dataset.nb) selectNotebook(ix.notebooks.find(n => n.id === b.dataset.nb));
   else if (b.dataset.a === 'new') addNotebook();
   else if (b.dataset.a === 'rename') renameNotebook(cur.nb);
+  else if (b.dataset.a === 'open') openNotebookModal();
+  else if (b.dataset.a === 'close') closeNotebook(cur.nb);
   else if (b.dataset.a === 'del') deleteNotebook(cur.nb);
 };
 function selectNotebook(nb) {
@@ -498,12 +533,36 @@ async function renameNotebook(nb) {
   const n = await ask('전자 필기장 이름 바꾸기', '이름', nb.name);
   if (n) { nb.name = n; scheduleIndexSave(); renderNotebook(); }
 }
+// 닫기: 지우지 않고 목록에서만 감춤 ([전자 필기장 열기·가져오기]에서 다시 열기)
+function closeNotebook(nb) {
+  if (openNbs_().length <= 1) return toast('열린 전자 필기장이 하나뿐이라 닫을 수 없어요.');
+  nb.closed = true;
+  if (nb === cur.nb) { const next = openNbs_()[0]; cur.nb = null; selectNotebook(next); }
+  scheduleIndexSave(); renderAll();
+  toast(`“${nb.name}”을(를) 닫았어요. [전자 필기장 열기·가져오기]에서 다시 열 수 있어요.`, [], 6000);
+}
+function openNotebookModal() {
+  const closed = ix.notebooks.filter(n => n.closed);
+  modal(`<h2>전자 필기장 열기·가져오기</h2>
+    ${closed.length ? `<div class="ai-label">닫아 둔 전자 필기장</div>${closed.map(n => `<button class="choice" data-open="${n.id}"><b>▤ ${esc(n.name)}</b><small>섹션 ${n.sections.length}개 · 페이지 ${n.sections.reduce((a, s) => a + s.pages.length, 0)}개</small></button>`).join('')}` : '<p>닫아 둔 전자 필기장이 없어요.</p>'}
+    <div class="ai-label">가져오기</div>
+    <button class="choice" id="opOneNote"><b>원노트에서 가져오기</b><small>마이크로소프트 계정 연결 또는 Word 파일로 가져와요.</small></button>
+    <div class="row"><button class="btn" id="opClose">닫기</button></div>`, m => {
+    m.querySelector('#opClose').onclick = closeModal;
+    m.querySelector('#opOneNote').onclick = () => { closeModal(); $('importOneNote').click(); };
+    m.querySelectorAll('[data-open]').forEach(b => b.onclick = () => {
+      const nb = ix.notebooks.find(n => n.id === b.dataset.open); nb.closed = false;
+      closeModal(); scheduleIndexSave(); if (nb === cur.nb) renderAll(); else selectNotebook(nb);
+      toast(`“${nb.name}”을(를) 다시 열었어요.`);
+    });
+  });
+}
 async function deleteNotebook(nb) {
-  if (ix.notebooks.length <= 1) return toast('전자 필기장이 하나뿐이라 지울 수 없어요.');
+  if (openNbs_().length <= 1 && !nb.closed) return toast('열린 전자 필기장이 하나뿐이라 지울 수 없어요.');
   const pages = nb.sections.flatMap(s => s.pages);
-  if (!(await confirmBox(`“${nb.name}” 전자 필기장 삭제`, `섹션 ${nb.sections.length}개, 페이지 ${pages.length}개가 함께 지워져요.${trashNote()}`))) return;
+  if (!(await confirmDelete(`“${nb.name}” 전자 필기장 삭제`, `섹션 ${nb.sections.length}개, 페이지 ${pages.length}개가 함께 지워져요.${trashNote()}`))) return;
   ix.notebooks.splice(ix.notebooks.indexOf(nb), 1);
-  if (nb === cur.nb) { dirty = false; editedSinceOpen = false; cur.nb = ix.notebooks[0]; cur.sec = cur.nb.sections[0] || null; cur.page = null; openPage(cur.sec?.pages[0] || null); }
+  if (nb === cur.nb) { dirty = false; editedSinceOpen = false; cur.nb = openNbs_()[0]; cur.sec = cur.nb.sections[0] || null; cur.page = null; openPage(cur.sec?.pages[0] || null); }
   scheduleIndexSave(); renderAll(); trashPages(pages);
 }
 // 전자 필기장 칸 (넓은 화면)
@@ -534,9 +593,10 @@ $('nbList').addEventListener('contextmenu', e => {
   if (li.dataset.id) notebookMenu(ix.notebooks.find(n => n.id === li.dataset.id), { x: e.clientX, y: e.clientY });
 });
 $('addNotebook').onclick = () => addNotebook();
+$('openNotebook').onclick = () => openNotebookModal();
 function notebookMenu(nb, at) {
-  const c = showCtx(`<button data-a="rename">이름 바꾸기</button><hr><button data-a="del" class="danger">전자 필기장 삭제</button>`, at);
-  c.onclick = e => { const b = e.target.closest('button'); if (!b) return; c.hidden = true; if (b.dataset.a === 'rename') renameNotebook(nb); else deleteNotebook(nb); };
+  const c = showCtx(`<button data-a="rename">이름 바꾸기</button><button data-a="close">전자 필기장 닫기</button><hr><button data-a="del" class="danger">전자 필기장 삭제</button>`, at);
+  c.onclick = e => { const b = e.target.closest('button'); if (!b) return; c.hidden = true; if (b.dataset.a === 'rename') renameNotebook(nb); else if (b.dataset.a === 'close') closeNotebook(nb); else deleteNotebook(nb); };
 }
 
 // 끌어서 순서 바꾸기 · 페이지를 섹션으로 옮기기
@@ -611,6 +671,23 @@ const needPage = () => { if (!cur.page) { toast('먼저 페이지를 열거나 �
 
 document.querySelectorAll('[data-cmd]').forEach(b => b.onclick = () => { if (!needPage()) return; restoreRange(); exec(b.dataset.cmd); });
 document.querySelectorAll('[data-block]').forEach(b => b.onclick = () => { if (!needPage()) return; restoreRange(); formatBlock(b.dataset.block); });
+// 한 번에 한 단계씩 작게·크게 (휴대폰에서 목록을 열지 않아도 됨)
+const FONT_STEPS = [9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 36];
+function stepFont(d) {
+  if (!needPage()) return; restoreRange();
+  // 고른 글의 첫 글자 크기를 기준으로
+  const s = getSelection(); if (!s.rangeCount) return;
+  const rg = s.getRangeAt(0); let n = rg.startContainer;
+  if (n.nodeType === 1) n = n.childNodes[rg.startOffset] || n;
+  while (n && n.nodeType === 1 && n.firstChild) n = n.firstChild;
+  const el = n && (n.nodeType === 1 ? n : n.parentElement);
+  const pt = el ? parseFloat(getComputedStyle(el).fontSize) * 0.75 : 11.25;
+  let i = d > 0 ? FONT_STEPS.findIndex(x => x > pt + 0.1) : FONT_STEPS.length - 1 - [...FONT_STEPS].reverse().findIndex(x => x < pt - 0.1);
+  if (i < 0 || i >= FONT_STEPS.length) return;
+  fontSize(FONT_STEPS[i]);
+}
+$('fontDown').onclick = () => stepFont(-1);
+$('fontUp').onclick = () => stepFont(1);
 $('fontSize').onchange = () => { const v = $('fontSize').value; $('fontSize').value = ''; if (!v || !needPage()) return; restoreRange(); fontSize(+v); };
 $('btnCheck').onclick = () => { if (!needPage()) return; restoreRange(); toggleChecklist(); };
 $('autoQuick').onclick = () => { S.auto = !S.auto; saveSettings(); toast(S.auto ? '자동 목록을 켰어요. “1. ” “- ” “[] ”를 입력하면 목록이 돼요.' : '자동 목록을 껐어요. “1. ”을 입력해도 글자 그대로 남아요.'); };
@@ -651,6 +728,41 @@ $('btnLink').onclick = async () => {
 $('openSettings').onclick = () => settingsModal();
 $('openStorage').onclick = () => storageModal();
 $('account').onclick = () => storageModal();
+
+// ---------- 글 너비 (원노트처럼 오른쪽 손잡이를 끌어서) ----------
+function applyPageWidth(p) {
+  const w = p && p.width;
+  $('page').style.width = w ? w + 'px' : '';
+  $('page').classList.toggle('fixed-w', !!w);
+}
+(() => {
+  const h = $('widthHandle');
+  h.addEventListener('pointerdown', e => {
+    if (!cur.page) return;
+    e.preventDefault();
+    const x0 = e.clientX, w0 = $('page').getBoundingClientRect().width;
+    document.body.classList.add('resizing'); h.classList.add('active');
+    const move = ev => { cur.page.width = Math.round(Math.min(4000, Math.max(320, w0 + ev.clientX - x0))); applyPageWidth(cur.page); };
+    const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); removeEventListener('pointercancel', up); document.body.classList.remove('resizing'); h.classList.remove('active'); scheduleIndexSave(); };
+    addEventListener('pointermove', move); addEventListener('pointerup', up); addEventListener('pointercancel', up);
+  });
+  h.addEventListener('dblclick', () => { if (!cur.page) return; delete cur.page.width; applyPageWidth(cur.page); scheduleIndexSave(); toast('글 너비를 창 너비에 맞췄어요.'); });
+})();
+
+// ---------- 휴대폰 뒤로 가기: 글을 쓰는 중이면 키보드와 커서만 닫음 ----------
+(() => {
+  let editing = false, ignorePop = false;
+  const touch = () => matchMedia('(pointer: coarse)').matches;
+  const inEdit = () => [$('editor'), $('pageTitle')].includes(document.activeElement);
+  ['editor', 'pageTitle'].forEach(id => $(id).addEventListener('focus', () => { if (touch() && !editing) { editing = true; history.pushState({ esn: 'edit' }, ''); } }));
+  document.addEventListener('focusout', () => setTimeout(() => {
+    if (editing && !inEdit()) { editing = false; ignorePop = true; history.back(); } // 다른 곳을 눌러 빠져나간 경우 뒤로 가기 기록 정리
+  }, 0));
+  addEventListener('popstate', () => {
+    if (ignorePop) { ignorePop = false; return; }
+    if (editing) { editing = false; document.activeElement?.blur(); getSelection().removeAllRanges(); }
+  });
+})();
 
 // ---------- 노트선 (보기 탭) ----------
 function applyLines(p) {
@@ -744,7 +856,7 @@ function applyFix(it) {
 async function runSpell() {
   if (!needPage()) return;
   if (store?.kind !== 'drive') return toast('맞춤법 검사는 구글 드라이브로 로그인했을 때 쓸 수 있어요.');
-  if (!store.signedIn) return handleErr({ auth: true }, runSpell);
+  try { await store.getToken(); } catch (e) { return handleErr(e, runSpell); }
   const blocks = spellBlocks();
   if (!blocks.length) return toast('검사할 글이 없어요.');
   showSpell(null);
@@ -757,7 +869,7 @@ async function runSpell() {
   const items = [];
   try {
     for (const g of groups) {
-      const r = await fetch(SPELL_API, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + store.token }, body: JSON.stringify({ p: g.map(b => b.text.slice(0, 2000)) }) });
+      const r = await fetch(SPELL_API, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + await store.getToken() }, body: JSON.stringify({ p: g.map(b => b.text.slice(0, 2000)) }) });
       if (r.status === 503) { $('spell').hidden = true; return toast('맞춤법 검사 서버에 OpenAI 키가 설정돼 있지 않아요.', [], 10000); }
       if (r.status === 401) { $('spell').hidden = true; return toast('이 계정은 맞춤법 검사를 쓸 수 없어요. 다시 로그인해 보세요.', [], 10000); }
       if (r.status === 404) { $('spell').hidden = true; return toast('맞춤법 검사 서버를 찾지 못했어요. config.js의 spellApi를 확인해 주세요.', [], 8000); }
@@ -830,7 +942,7 @@ function restoreKept(html) {
   return { html: out, missing };
 }
 async function aiCall(mode, prompt) {
-  const r = await fetch(AI_API, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + store.token }, body: JSON.stringify({ mode, prompt, title: $('pageTitle').value, html: pageForAI() }) });
+  const r = await fetch(AI_API, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + await store.getToken() }, body: JSON.stringify({ mode, prompt, title: $('pageTitle').value, html: pageForAI() }) });
   const j = await r.json().catch(() => ({}));
   if (r.ok) return j;
   const msg = { 503: 'AI 서버에 OpenAI 키가 설정돼 있지 않아요.', 401: '이 계정은 AI 도우미를 쓸 수 없어요. 다시 로그인해 보세요.', 413: '페이지가 너무 길어요. 페이지를 나눠서 해 보세요.', 404: 'AI 서버를 찾지 못했어요. config.js의 aiApi를 확인해 주세요.' }[r.status];
@@ -871,7 +983,7 @@ function openAI() {
   const page = cur.page;
   async function run(mode, prompt) {
     if (!prompt) { promptBox.focus(); return toast('무엇을 할지 적어 주세요.'); }
-    if (!store.signedIn) return handleErr({ auth: true }, () => run(mode, prompt));
+    try { await store.getToken(); } catch (e) { return handleErr(e, () => run(mode, prompt)); }
     const out = $('aiOut');
     el.querySelectorAll('button').forEach(b => { if (b.id !== 'aiClose') b.disabled = true; });
     out.innerHTML = `<div class="spell-empty">AI가 ${mode === 'edit' ? '페이지를 고치는' : '생각하는'} 중…<br><small>긴 페이지는 30초~1분쯤 걸려요.</small></div>`;
@@ -998,7 +1110,7 @@ function storageModal() {
     <div class="row"><button class="btn" id="stClose">닫기</button></div>`, m => {
     m.querySelector('#stClose').onclick = closeModal;
     m.querySelector('#stOpen')?.addEventListener('click', () => window.open(`https://drive.google.com/drive/folders/${store.root}`, '_blank', 'noopener'));
-    m.querySelector('#stOut')?.addEventListener('click', async () => { await flush().catch(() => {}); store.signOut(); localStorage.removeItem('dn-mode'); location.reload(); });
+    m.querySelector('#stOut')?.addEventListener('click', async () => { await flush().catch(() => {}); await store.signOut(); localStorage.removeItem('dn-mode'); location.reload(); });
     m.querySelector('#stMigrate')?.addEventListener('click', () => { closeModal(); migrate(); });
     m.querySelector('#stDrive')?.addEventListener('click', async () => { await flush().catch(() => {}); localStorage.setItem('dn-mode', 'drive'); closeModal(); startDrive(true, true); });
   });
@@ -1057,16 +1169,46 @@ async function startLocal() {
 }
 async function startDrive(interactive, offerMigrate) {
   store = new DriveStore(CLIENT_ID);
-  if (!store.restore()) {
-    if (!interactive) return driveGate();
+  if (interactive) {
     try { await store.signIn(); } catch (e) { toast(e.message, [], 8000); return driveGate(); }
+    if (store.noRefresh) toast('로그인을 계속 유지하려면 한 번만 더 해 주세요: 구글 계정 설정 → 보안 → 타사 앱 연결에서 “에스 노트”를 지운 뒤 다시 로그인하면 돼요.', [], 15000);
+  } else if (!store.restore()) {
+    // 켤 때마다 로그인하지 않도록: 로그인 유지 서버에서 저절로 다시 로그인
+    try { await store.getToken(); }
+    catch (e) { if (!e.offline) return driveGate(); } // 인터넷이 끊겼으면 기기에 보관한 노트로 열기
   }
   try {
     await load();
     if (offerMigrate) migrate();
+    afterDriveLoad();
   } catch (e) {
     if (e.auth) return driveGate();
+    if (e.offline) return offlineGate();
     handleErr(e, () => location.reload());
+  }
+}
+// 인터넷이 끊긴 채로 켰는데 기기에 보관한 노트도 없을 때
+function offlineGate() {
+  showEmpty('<h2>인터넷 연결을 기다리는 중이에요</h2><p>연결되면 저절로 노트를 불러와요. 로그인은 그대로 유지돼요.</p>');
+  status('offline');
+  addEventListener('online', () => startDrive(false), { once: true });
+}
+// 드라이브에서 열고 난 뒤: 끊겼을 때 써 둔 페이지 올리기, 같은 섹션 페이지 미리 받아 두기
+async function afterDriveLoad() {
+  if (store.offline) { status('', '⚠ 오프라인 · 이 기기에 저장 중'); return; }
+  try { const n = await store.flushPending(id => findPage(id)?.p); if (n) { scheduleIndexSave(); toast(`인터넷이 끊겼을 때 쓴 페이지 ${n}개를 드라이브에 올렸어요.`); } } catch {}
+  prefetchSection(cur.sec);
+}
+let prefetching = null;
+async function prefetchSection(sec) {
+  if (!sec || store?.kind !== 'drive' || !navigator.onLine) return;
+  const token = prefetching = {};
+  for (const p of sec.pages.slice(0, 60)) {
+    if (prefetching !== token) return; // 다른 섹션으로 바뀜
+    const c = await store.cachedPage(p);
+    if (c && (c.pending || (c.updated >= (p.updated || 0) && c.fid === p.fid))) continue;
+    try { await store.loadPage(p); } catch { return; }
+    await new Promise(r => setTimeout(r, 150));
   }
 }
 // 새로 열 때마다 구글 로그인 버튼 한 번 (팝업은 버튼을 눌러야 열려서)

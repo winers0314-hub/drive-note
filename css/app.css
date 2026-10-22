@@ -367,3 +367,25 @@ body.focus .page { padding-top: 40px; }
 .pop.lines-pop button { justify-content: flex-start; text-align: left; height: 32px; border: 0; background: transparent; border-radius: 5px; padding: 0 10px; display: flex; align-items: center; }
 .pop.lines-pop button:hover { background: var(--hover); }
 .pop.lines-pop button.on { background: var(--sel); font-weight: 600; }
+
+/* 대시 목록 (- 띄어쓰기) */
+.editor ul.dash { list-style-type: "-  "; }
+.editor ul.dash > li::marker { color: var(--ink); }
+
+.nb-actions { display: flex; flex-wrap: wrap; }
+.nb-actions .add { flex: 1; margin: 6px 4px 10px; white-space: nowrap; }
+
+/* 글 너비 손잡이 (원노트처럼) */
+.page { position: relative; }
+.width-handle { position: absolute; top: 18px; bottom: 60px; right: 0; width: 10px; cursor: col-resize; border-radius: 4px; }
+.width-handle::after { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 2px; border-radius: 2px; background: var(--line-2); opacity: 0; transition: opacity .15s; }
+.page:hover .width-handle::after, .width-handle.active::after { opacity: 1; }
+.width-handle:hover::after, .width-handle.active::after { background: var(--brand); }
+.page.fixed-w { max-width: none; }
+@media (pointer: coarse) { .width-handle { display: none; } }
+/* 꾹 눌러 형광펜 */
+.editor.hl-mode { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.hl-preview { position: fixed; inset: 0; pointer-events: none; z-index: 40; }
+.hl-preview i { position: fixed; background: rgba(255, 241, 118, .65); border-radius: 2px; }
+
+.fs-btn small { font-size: 10px; margin-left: 1px; }
