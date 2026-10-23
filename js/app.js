@@ -979,11 +979,15 @@ function restoreKept(html) {
   }
   return { html: out, missing };
 }
+// AI 도우미 성능: 기본(Haiku, 저렴) / 꼼꼼(Sonnet) / 최고(Opus). 맞춤법·AI 검색은 늘 기본
+const AI_TIERS = [['fast', '기본', '빠르고 저렴 · 고치기 1번 약 10원'], ['good', '꼼꼼', '정리·고치기가 더 꼼꼼 · 고치기 1번 약 200원'], ['best', '최고', '가장 똑똑함 · 고치기 1번 약 400원']];
+let aiTier = 'fast';
+try { if (AI_TIERS.some(t => t[0] === localStorage.getItem('dn-ai-tier'))) aiTier = localStorage.getItem('dn-ai-tier'); } catch {}
 async function aiCall(mode, prompt, root, extra) {
-  const r = await fetch(AI_API, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + await store.getToken() }, body: JSON.stringify({ mode, prompt, title: $('pageTitle').value, html: mode === 'search' ? '' : pageForAI(root), ...extra }) });
+  const r = await fetch(AI_API, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + await store.getToken() }, body: JSON.stringify({ mode, prompt, title: $('pageTitle').value, html: mode === 'search' ? '' : pageForAI(root), ...(mode === 'search' ? {} : { tier: aiTier }), ...extra }) });
   const j = await r.json().catch(() => ({}));
   if (r.ok) return j;
-  const msg = { 503: 'AI 서버에 OpenAI 키가 설정돼 있지 않아요.', 401: '이 계정은 AI 도우미를 쓸 수 없어요. 다시 로그인해 보세요.', 413: '페이지가 너무 길어요. 페이지를 나눠서 해 보세요.', 404: 'AI 서버를 찾지 못했어요. config.js의 aiApi를 확인해 주세요.' }[r.status];
+  const msg = { 503: 'AI 서버에 AI 키가 설정돼 있지 않아요.', 401: '이 계정은 AI 도우미를 쓸 수 없어요. 다시 로그인해 보세요.', 413: '페이지가 너무 길어요. 페이지를 나눠서 해 보세요.', 404: 'AI 서버를 찾지 못했어요. config.js의 aiApi를 확인해 주세요.' }[r.status];
   throw new Error(msg || 'AI 오류: ' + (j.detail || j.error || r.status));
 }
 function answerHTML(text) {
@@ -1003,6 +1007,9 @@ function openAI() {
   const el = $('ai'); el.hidden = false;
   el.innerHTML = `<div class="spell-head"><b>✨ AI 도우미</b><button id="aiClose" aria-label="닫기">✕</button></div>
     <div class="ai-body">
+      <div class="ai-label">성능</div>
+      <div class="ai-tier" id="aiTier">${AI_TIERS.map(t => `<button data-tier="${t[0]}" class="${t[0] === aiTier ? 'on' : ''}">${t[1]}</button>`).join('')}</div>
+      <div class="ai-hint left" id="aiTierHint">${AI_TIERS.find(t => t[0] === aiTier)[2]}</div>
       <div class="ai-label">이 페이지를 바로 고치기</div>
       <div class="ai-chips">${AI_PRESETS.map((p, i) => `<button data-preset="${i}">${esc(p[0])}</button>`).join('')}</div>
       <div class="ai-label">직접 쓰기</div>
@@ -1011,6 +1018,12 @@ function openAI() {
       <div id="aiOut"></div>
     </div>`;
   $('aiClose').onclick = () => { el.hidden = true; };
+  $('aiTier').onclick = e => {
+    const b = e.target.closest('[data-tier]'); if (!b) return;
+    aiTier = b.dataset.tier; try { localStorage.setItem('dn-ai-tier', aiTier); } catch {}
+    $('aiTier').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+    $('aiTierHint').textContent = AI_TIERS.find(t => t[0] === aiTier)[2];
+  };
   const promptBox = $('aiPrompt');
   promptBox.onkeydown = e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); run('ask', promptBox.value.trim()); } };
   el.querySelector('.ai-chips').onclick = e => { const b = e.target.closest('[data-preset]'); if (b) run('edit', AI_PRESETS[+b.dataset.preset][1]); };
