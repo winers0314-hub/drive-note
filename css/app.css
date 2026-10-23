@@ -389,3 +389,23 @@ body.focus .page { padding-top: 40px; }
 .hl-preview i { position: fixed; background: rgba(255, 241, 118, .65); border-radius: 2px; }
 
 .fs-btn small { font-size: 10px; margin-left: 1px; }
+
+/* AI로 찾기 */
+.ai-search-btn { border: 0; background: rgba(255, 255, 255, .14); color: #fff; border-radius: 5px; padding: 2px 8px; font-size: 12px; white-space: nowrap; }
+.ai-search-btn:hover { background: rgba(255, 255, 255, .25); }
+#pageList .why { color: var(--brand); font-weight: 600; }
+.col-head button + button { margin-left: 6px; }
+/* AI 결과 검토 */
+.ai-tabs { display: flex; gap: 4px; margin: 4px 0 8px; border-bottom: 1px solid var(--line); }
+.ai-tabs button { border: 0; background: transparent; padding: 6px 10px; border-bottom: 2px solid transparent; color: var(--muted); font-size: 13px; }
+.ai-tabs button.on { color: var(--ink); border-bottom-color: var(--ink); font-weight: 600; }
+.ai-diff { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 13.5px; line-height: 1.6; }
+.ai-diff p { margin: 0 0 6px; }
+.ai-diff .d-sum { font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+.ai-diff .d-same { color: var(--muted); opacity: .7; }
+.ai-diff del { background: rgba(224, 62, 62, .14); color: var(--danger); text-decoration: line-through; }
+.ai-diff ins { background: rgba(15, 123, 108, .14); color: var(--ok); text-decoration: none; }
+.ai-diff .d-chg { border-left: 3px solid var(--brand); padding-left: 8px; margin: 0 0 8px; }
+.ai-preview[contenteditable="true"] { outline: 2px dashed var(--line-2); outline-offset: 2px; }
+.ai-preview[contenteditable="true"]:focus { outline-color: var(--brand); }
+.ai-acts.sep { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 12px; }

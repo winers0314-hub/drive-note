@@ -264,9 +264,11 @@ function renderPages() {
   const ul = $('pageList'), head = $('pagesHead');
   if (searchMode) {
     const hits = searchMode.ids.map(findPage).filter(Boolean);
-    head.innerHTML = `<span>검색 결과 ${hits.length}개 · “${esc(searchMode.q)}”</span><button id="endSearch">닫기</button>`;
+    head.innerHTML = searchMode.loading ? `<span>✨ AI가 찾는 중… “${esc(searchMode.q)}”</span><button id="endSearch">닫기</button>`
+      : `<span>${searchMode.ai ? '✨ AI 검색' : '검색'} 결과 ${hits.length}개 · “${esc(searchMode.q)}”</span>${searchMode.ai ? '' : '<button id="aiAgain">✨ AI로 찾기</button>'}<button id="endSearch">닫기</button>`;
     $('endSearch').onclick = endSearch;
-    ul.innerHTML = hits.map(({ sec, p }) => `<li data-id="${p.id}" class="${p === cur.page ? 'on' : ''}"><div class="row"><span class="name">${esc(p.title || '제목 없음')}</span></div><span class="snip">${esc(sec.name)} · ${esc(p.snip || '')}</span></li>`).join('') || '<li class="none"><span class="snip">찾는 내용이 없어요.</span></li>';
+    $('aiAgain')?.addEventListener('click', () => runAISearch(searchMode.q));
+    ul.innerHTML = hits.map(({ sec, p }) => `<li data-id="${p.id}" class="${p === cur.page ? 'on' : ''}"><div class="row"><span class="name">${esc(p.title || '제목 없음')}</span></div><span class="snip">${searchMode.why?.[p.id] ? `<span class="why">✨ ${esc(searchMode.why[p.id])}</span> · ` : ''}${esc(sec.name)} · ${esc(p.snip || '')}</span></li>`).join('') || (searchMode.loading ? '' : `<li class="none"><span class="snip">${searchMode.ai ? 'AI도 맞는 페이지를 찾지 못했어요.' : '찾는 내용이 없어요. 위의 ✨ AI로 찾기를 눌러 보세요.'}</span></li>`);
     $('addPage').hidden = true;
     return;
   }
@@ -928,8 +930,8 @@ const AI_PRESETS = [
 ];
 // 그림·첨부 파일은 AI에 보내지 않고 ⟦그림1⟧ 같은 표시로 바꿨다가 되돌림
 let aiKeep = [];
-function pageForAI() {
-  const c = $('editor').cloneNode(true);
+function pageForAI(root = $('editor')) {
+  const c = root.cloneNode(true);
   aiKeep = [];
   c.querySelectorAll('img, .att').forEach(el => {
     const k = el.cloneNode(true); if (k.tagName === 'IMG' && k.dataset.fid) k.removeAttribute('src'); k.classList.remove('sel');
@@ -947,8 +949,8 @@ function restoreKept(html) {
   }
   return { html: out, missing };
 }
-async function aiCall(mode, prompt) {
-  const r = await fetch(AI_API, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + await store.getToken() }, body: JSON.stringify({ mode, prompt, title: $('pageTitle').value, html: pageForAI() }) });
+async function aiCall(mode, prompt, root, extra) {
+  const r = await fetch(AI_API, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + await store.getToken() }, body: JSON.stringify({ mode, prompt, title: $('pageTitle').value, html: mode === 'search' ? '' : pageForAI(root), ...extra }) });
   const j = await r.json().catch(() => ({}));
   if (r.ok) return j;
   const msg = { 503: 'AI 서버에 OpenAI 키가 설정돼 있지 않아요.', 401: '이 계정은 AI 도우미를 쓸 수 없어요. 다시 로그인해 보세요.', 413: '페이지가 너무 길어요. 페이지를 나눠서 해 보세요.', 404: 'AI 서버를 찾지 못했어요. config.js의 aiApi를 확인해 주세요.' }[r.status];
@@ -987,14 +989,17 @@ function openAI() {
   promptBox.focus();
 
   const page = cur.page;
-  async function run(mode, prompt) {
+  el._run = run; // 검토 중 [이대로 다시 고치기]에서 씀
+  async function run(mode, prompt, base) {
     if (!prompt) { promptBox.focus(); return toast('무엇을 할지 적어 주세요.'); }
     try { await store.getToken(); } catch (e) { return handleErr(e, () => run(mode, prompt)); }
     const out = $('aiOut');
     el.querySelectorAll('button').forEach(b => { if (b.id !== 'aiClose') b.disabled = true; });
+    const keepOrig = base ? out._orig : $('editor').cloneNode(true); // 처음 페이지 모습 (바뀐 부분 비교용)
     out.innerHTML = `<div class="spell-empty">AI가 ${mode === 'edit' ? '페이지를 고치는' : '생각하는'} 중…<br><small>긴 페이지는 30초~1분쯤 걸려요.</small></div>`;
+    out._orig = keepOrig;
     try {
-      const j = await aiCall(mode, prompt);
+      const j = await aiCall(mode, prompt, base);
       if (cur.page !== page || el.hidden) return;
       if (mode === 'ask') {
         out.innerHTML = `<div class="ai-answer">${answerHTML(j.answer || '')}</div><div class="ai-acts"><button class="btn" id="aiCopy">복사</button><button class="btn primary" id="aiInsert">페이지 끝에 넣기</button></div>`;
@@ -1006,27 +1011,121 @@ function openAI() {
           ed.focus(); selectRange(r); document.execCommand('insertHTML', false, answerHTML(j.answer || '')); markDirty();
           toast('페이지 끝에 넣었어요.');
         };
-      } else {
-        const { html, missing } = restoreKept(j.html || '');
-        out.innerHTML = `${j.note ? `<p class="ai-note">${esc(j.note)}</p>` : ''}${missing ? `<p class="ai-note warn">그림·첨부 ${missing}개는 맨 아래에 붙였어요.</p>` : ''}
-          <div class="ai-label">미리 보기</div><div class="ai-preview editor">${html}</div>
-          <div class="ai-acts"><button class="btn" id="aiDiscard">버리기</button><button class="btn primary" id="aiApply">페이지에 적용</button></div>
-          <p class="ai-hint">적용한 뒤에도 Ctrl+Z로 되돌릴 수 있어요.</p>`;
-        out.querySelectorAll('img[data-fid]').forEach(async img => { const u = await fileURL(img.dataset.fid).catch(() => ''); if (u) img.src = u; });
-        $('aiDiscard').onclick = () => { out.innerHTML = ''; };
-        $('aiApply').onclick = () => {
-          if (cur.page !== page) return toast('다른 페이지로 바뀌어서 적용하지 않았어요.');
-          const ed = $('editor'), r = document.createRange(); r.selectNodeContents(ed);
-          ed.focus(); selectRange(r); document.execCommand('insertHTML', false, html);
-          hydrate(); markDirty();
-          out.innerHTML = '<p class="ai-note">페이지에 적용했어요. 되돌리려면 Ctrl+Z를 누르세요.</p>';
-        };
-      }
+      } else showReview(out, j, page);
     } catch (e) { out.innerHTML = `<p class="ai-note warn">${esc(e.message || 'AI 도우미가 답하지 못했어요.')}</p>`; }
     finally { el.querySelectorAll('button').forEach(b => { b.disabled = false; }); }
   }
 }
 $('aiOpen').onclick = openAI;
+
+// ---- 고친 결과 검토: 바뀐 부분 보기, 직접 고치기, 추가 요청, 적용 ----
+function showReview(out, j, page) {
+  const { html, missing } = restoreKept(j.html || '');
+  out.innerHTML = `${j.note ? `<p class="ai-note">${esc(j.note)}</p>` : ''}${missing ? `<p class="ai-note warn">그림·첨부 ${missing}개는 맨 아래에 붙였어요.</p>` : ''}
+    <div class="ai-tabs"><button data-t="diff" class="on">바뀐 부분</button><button data-t="edit">고친 결과 · 직접 고치기</button></div>
+    <div class="ai-diff" id="aiDiff"></div>
+    <div class="ai-preview editor" id="aiPrev" contenteditable="true" spellcheck="false" hidden>${html}</div>
+    <div class="ai-label">더 고칠 점이 있으면</div>
+    <textarea id="aiMore" rows="2" placeholder="예) 둘째 문단은 원래대로 둬 줘 / 요약을 더 짧게"></textarea>
+    <div class="ai-acts"><button class="btn" id="aiMoreGo">이대로 다시 고치기</button></div>
+    <div class="ai-acts sep"><button class="btn" id="aiDiscard">버리기</button><button class="btn primary" id="aiApply">검토 끝 · 페이지에 적용</button></div>
+    <p class="ai-hint">적용하기 전에는 페이지가 바뀌지 않아요. 적용한 뒤에도 Ctrl+Z로 되돌릴 수 있어요.</p>`;
+  const prev = out.querySelector('#aiPrev'), diff = out.querySelector('#aiDiff');
+  prev.querySelectorAll('img[data-fid]').forEach(async img => { const u = await fileURL(img.dataset.fid).catch(() => ''); if (u) img.src = u; });
+  const showDiff = () => { diff.innerHTML = diffHTML(out._orig, prev); };
+  showDiff();
+  out.querySelector('.ai-tabs').onclick = e => {
+    const t = e.target.closest('[data-t]'); if (!t) return;
+    out.querySelectorAll('.ai-tabs button').forEach(x => x.classList.toggle('on', x === t));
+    prev.hidden = t.dataset.t !== 'edit'; diff.hidden = t.dataset.t !== 'diff';
+    if (t.dataset.t === 'diff') showDiff(); else prev.focus();
+  };
+  // 추가 요청: 지금 검토 중인 결과를 바탕으로 다시 고침
+  out.querySelector('#aiMoreGo').onclick = () => {
+    const more = out.querySelector('#aiMore').value.trim(); if (!more) return out.querySelector('#aiMore').focus();
+    const base = prev.cloneNode(true); base.querySelectorAll('img[data-fid]').forEach(i => i.removeAttribute('src'));
+    $('ai')._run('edit', more, base);
+  };
+  out.querySelector('#aiDiscard').onclick = () => { out.innerHTML = '<p class="ai-note">버렸어요. 페이지는 그대로예요.</p>'; };
+  out.querySelector('#aiApply').onclick = () => {
+    if (cur.page !== page) return toast('다른 페이지로 바뀌어서 적용하지 않았어요.');
+    const c = prev.cloneNode(true); c.querySelectorAll('img[data-fid]').forEach(i => i.removeAttribute('src'));
+    const ed = $('editor'), r = document.createRange(); r.selectNodeContents(ed);
+    ed.focus(); selectRange(r); document.execCommand('insertHTML', false, sanitize(c.innerHTML));
+    hydrate(); markDirty();
+    out.innerHTML = '<p class="ai-note">검토한 내용을 페이지에 적용했어요. 되돌리려면 Ctrl+Z를 누르세요.</p>';
+  };
+}
+// 문단 단위로 원래 페이지와 고친 결과를 비교 (같은 문단은 흐리게, 바뀐 낱말은 표시)
+function blockTexts(root) {
+  const B = 'p, h1, h2, h3, h4, li, td, th, blockquote, pre';
+  return [...root.querySelectorAll(B)].filter(el => !el.querySelector(B)).map(el => el.textContent.replace(/\s+/g, ' ').trim()).filter(Boolean).slice(0, 800);
+}
+function lcsPairs(a, b, eq) {
+  const n = a.length, m = b.length, dp = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) dp[i][j] = eq(a[i], b[j]) ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const ops = []; let i = 0, j = 0;
+  while (i < n && j < m) { if (eq(a[i], b[j])) { ops.push(['=', a[i]]); i++; j++; } else if (dp[i + 1][j] >= dp[i][j + 1]) ops.push(['-', a[i++]]); else ops.push(['+', b[j++]]); }
+  while (i < n) ops.push(['-', a[i++]]); while (j < m) ops.push(['+', b[j++]]);
+  return ops;
+}
+function wordDiff(a, b) {
+  const A = a.split(/(\s+)/), Bw = b.split(/(\s+)/);
+  if (A.length * Bw.length > 60000) return [`<del>${esc(a)}</del>`, `<ins>${esc(b)}</ins>`];
+  const ops = lcsPairs(A, Bw, (x, y) => x === y);
+  const side = (skip, mark, tag) => { let h = '', run = ''; for (const [t, w] of ops) { if (t === skip) continue; if (t === mark) { run += w; continue; } if (run) { h += run.trim() ? `<${tag}>${esc(run)}</${tag}>` : esc(run); run = ''; } h += esc(w); } if (run) h += `<${tag}>${esc(run)}</${tag}>`; return h; };
+  return [side('+', '-', 'del'), side('-', '+', 'ins')];
+}
+const similar = (a, b) => { const A = bigramsOf(a), B = bigramsOf(b); if (!A.size || !B.size) return false; let c = 0; A.forEach(g => { if (B.has(g)) c++; }); return c / Math.min(A.size, B.size) >= 0.35; };
+function diffHTML(origRoot, newRoot) {
+  const ops = lcsPairs(blockTexts(origRoot), blockTexts(newRoot), (x, y) => x === y);
+  let html = '', ch = 0, add = 0, del = 0;
+  for (let k = 0; k < ops.length; k++) {
+    const [t, txt] = ops[k];
+    if (t === '=') { html += `<p class="d-same">${esc(txt)}</p>`; continue; }
+    if (t === '-' && ops[k + 1]?.[0] === '+' && similar(txt, ops[k + 1][1])) { const [x, y] = wordDiff(txt, ops[k + 1][1]); html += `<div class="d-chg"><p class="d-del">${x}</p><p class="d-add">${y}</p></div>`; ch++; k++; continue; }
+    if (t === '-') { html += `<p class="d-del whole"><del>${esc(txt)}</del></p>`; del++; }
+    else { html += `<p class="d-add whole"><ins>${esc(txt)}</ins></p>`; add++; }
+  }
+  const sum = ch + add + del ? `바뀐 문단 ${ch}개 · 새로 생긴 ${add}개 · 빠진 ${del}개` : '글 내용은 그대로예요 (모양·순서만 바뀌었을 수 있어요)';
+  return `<p class="d-sum">${sum} <span>· <del>빨강</del> 빠짐 · <ins>초록</ins> 새로 씀</span></p>${html}`;
+}
+
+// ---------- AI로 찾기: 말로 찾고 싶은 내용을 쓰면 노트 전체에서 맞는 페이지를 찾음 ----------
+const bigramsOf = t => { const s2 = t.replace(/\s+/g, '').toLowerCase(), out = new Set(); for (let i = 0; i < s2.length - 1; i++) out.add(s2.slice(i, i + 2)); return out; };
+async function pageText(p) {
+  const c = store.kind === 'drive' ? await store.cachedPage(p) : { html: await store.loadPage(p) };
+  return c ? parseHTML(c.html).textContent.replace(/\s+/g, ' ').trim() : (p.snip || '');
+}
+async function runAISearch(q) {
+  if (!q) return toast('찾고 싶은 내용을 검색창에 적어 주세요.');
+  if (store?.kind !== 'drive') return toast('AI로 찾기는 구글 드라이브로 로그인했을 때 쓸 수 있어요.');
+  try { await store.getToken(); } catch (e) { return handleErr(e, () => runAISearch(q)); }
+  await flush().catch(() => {});
+  searchMode = { q, ids: [], ai: true, loading: true }; renderPages(); if (phone()) setView('pages');
+  // 1) 앱에서 먼저 후보를 고름 (글자 겹침 점수) → 2) AI가 그중 맞는 걸 고르고 이유를 붙임
+  const qb = bigramsOf(q), list = allPages().filter(x => !x.nb.closed), scored = [];
+  for (const x of list) {
+    const text = await pageText(x.p), title = x.p.title || '';
+    const tb = bigramsOf(title), bb = bigramsOf(text);
+    let score = 0; qb.forEach(g => { if (tb.has(g)) score += 3; if (bb.has(g)) score += 1; });
+    // 가장 많이 겹치는 곳 근처를 잘라서 보냄
+    let at = 0, best = -1; const low = text.toLowerCase();
+    for (const g of qb) { const i = low.indexOf(g); if (i >= 0 && (best < 0 || i < best)) best = i; }
+    if (best > 0) at = Math.max(0, best - 150);
+    scored.push({ x, score, text: text.slice(at, at + 600) });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  const cands = scored.filter(c => c.score > 0).slice(0, 50);
+  if (cands.length < 15) cands.push(...scored.filter(c => c.score === 0).slice(0, 15 - cands.length)); // 낱말이 안 겹쳐도 뜻으로 찾을 수 있게
+  try {
+    const j = await aiCall('search', q, null, { items: cands.map(c => ({ id: c.x.p.id, title: c.x.p.title || '제목 없음', path: c.x.nb.name + ' › ' + c.x.sec.name, text: c.text })) });
+    if (searchMode?.q !== q) return;
+    searchMode = { q, ai: true, ids: j.results.map(r => r.id), why: Object.fromEntries(j.results.map(r => [r.id, r.why])) };
+    renderPages();
+  } catch (e) { searchMode = null; renderPages(); handleErr(e); }
+}
+$('aiSearchBtn').onclick = () => runAISearch($('search').value.trim());
 
 
 // ---------- 한글·엑셀 변환 ----------
