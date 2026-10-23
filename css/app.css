@@ -121,6 +121,13 @@ button { cursor: pointer; }
 .shell.nav-off { grid-template-columns: 1fr; }
 .shell.nav-off .col { display: none; }
 .col-nb { background: var(--panel); }
+.nb-filter { position: relative; margin: 8px 10px 4px; }
+.nb-filter input { width: 100%; height: 30px; border: 1px solid var(--line-2); border-radius: 6px; padding: 0 28px 0 9px; background: var(--paper); color: var(--ink); font: inherit; font-size: 13px; }
+.nb-filter input:focus { outline: 2px solid var(--brand-soft); border-color: var(--brand); }
+.nb-filter button { position: absolute; right: 3px; top: 3px; width: 24px; height: 24px; border: 0; background: transparent; color: var(--muted); border-radius: 4px; font-size: 12px; }
+.nb-filter button:hover { background: var(--hover); color: var(--ink); }
+#nbList mark { background: #fff176; color: inherit; border-radius: 2px; padding: 0 1px; }
+#nbList li.none { color: var(--muted); font-size: 13px; padding: 10px 14px; cursor: default; }
 .col-sec .nb { display: none; }
 #nbList li .nbi { width: 14px; height: 18px; border-radius: 2px 4px 4px 2px; flex: none; box-shadow: inset 3px 0 0 rgba(0, 0, 0, .18); }
 #secHead { padding-top: 12px; color: var(--ink); font-size: 13px; }

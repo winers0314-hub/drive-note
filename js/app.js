@@ -241,10 +241,35 @@ let openNbs = new Set(), curCollapsed = false; // 지금 전자 필기장은 늘
 try { openNbs = new Set(JSON.parse(localStorage.getItem('dn-open-nb') || '[]')); } catch {}
 const saveOpenNbs = () => { try { localStorage.setItem('dn-open-nb', JSON.stringify([...openNbs])); } catch {} };
 // 전자 필기장 칸: 컴퓨터에서는 전자 필기장 아래에 섹션이 펼쳐지는 트리, 폴드에서는 전자 필기장만 (섹션은 옆 칸)
+// 전자 필기장 칸 찾기: 전자 필기장 이름이나 섹션 이름만 찾음 (페이지 내용은 X). 띄어쓰기·대소문자 무시
+let nbQ = '';
+const normQ = t => String(t || '').replace(/\s+/g, '').toLowerCase();
+function markQ(name) {
+  if (!nbQ) return esc(name);
+  // 띄어쓰기를 건너뛰며 맞는 곳을 찾아 굵게 표시
+  const chars = [...name], idx = [];
+  chars.forEach((c, k) => { if (!/\s/.test(c)) idx.push(k); });
+  const flat = idx.map(k => chars[k]).join('').toLowerCase(), at = flat.indexOf(nbQ);
+  if (at < 0) return esc(name);
+  const a = idx[at], b = idx[at + nbQ.length - 1] + 1;
+  return esc(chars.slice(0, a).join('')) + '<mark>' + esc(chars.slice(a, b).join('')) + '</mark>' + esc(chars.slice(b).join(''));
+}
 function renderNotebook() {
   $('nbName').textContent = cur.nb ? cur.nb.name : '전자 필기장 없음';
   $('secHead').textContent = cur.nb ? cur.nb.name : '';
   if (cur.nb && !curCollapsed) openNbs.add(cur.nb.id);
+  if (nbQ) {
+    // 찾는 중: 이름이 맞는 전자 필기장은 섹션을 모두, 아니면 이름이 맞는 섹션만 펼쳐서 보여 줌
+    const html = ix.notebooks.map((n, i) => {
+      if (n.closed) return '';
+      const hit = normQ(n.name).includes(nbQ), secs = hit ? n.sections : n.sections.filter(s => normQ(s.name).includes(nbQ));
+      if (!hit && !secs.length) return '';
+      return `<li data-id="${n.id}" class="nb-item open${n === cur.nb ? ' on' : ''}"><button class="chev" data-chev aria-label="접기">›</button><span class="nbi" style="background:${NB_COLORS[i % NB_COLORS.length]}"></span><span class="name">${markQ(n.name)}</span><button class="more" data-more="nb" aria-label="전자 필기장 메뉴">⋯</button></li>` +
+        secs.map(s => `<li data-sec="${s.id}" data-nb="${n.id}" class="tree-sec${s === cur.sec ? ' on' : ''}"><span class="bar" style="background:${s.color}"></span><span class="name">${markQ(s.name)}</span><button class="more" data-more="sec" aria-label="섹션 메뉴">⋯</button></li>`).join('');
+    }).join('');
+    $('nbList').innerHTML = html || '<li class="none"><span class="name">찾는 전자 필기장·섹션이 없어요.</span></li>';
+    return;
+  }
   $('nbList').innerHTML = ix.notebooks.map((n, i) => {
     if (n.closed) return '';
     const open = openNbs.has(n.id);
@@ -253,6 +278,13 @@ function renderNotebook() {
         `<li class="tree-sec tree-add" data-addsec="${n.id}"><span class="bar"></span><span class="name">＋ 섹션 추가</span></li>` : '');
   }).join('');
 }
+function setNbFilter(v) {
+  $('nbFilter').value = v; nbQ = normQ(v); $('nbFilterX').hidden = !v;
+  if (ix) renderNotebook();
+}
+$('nbFilter').addEventListener('input', () => setNbFilter($('nbFilter').value));
+$('nbFilter').addEventListener('keydown', e => { if (e.key === 'Escape') setNbFilter(''); });
+$('nbFilterX').onclick = () => { setNbFilter(''); $('nbFilter').focus(); };
 function renderSections() {
   const ul = $('sectionList');
   ul.innerHTML = (cur.nb?.sections || []).map(s => `<li data-id="${s.id}" class="${s === cur.sec ? 'on' : ''}" draggable="true" style="border-left-color:${s.color}"><span class="dot" style="background:${s.color}"></span><span class="name">${esc(s.name)}</span><button class="more" data-more="sec" aria-label="섹션 메뉴">⋯</button></li>`).join('');
