@@ -324,11 +324,17 @@ async function openPage(p, { keepScroll = false, silent = false, focusTitle = fa
   applyLines(p); applyPageWidth(p);
   $('pageTitle').value = p.title || '';
   $('pageDate').textContent = fmtFull(p.created);
-  $('editor').innerHTML = '';
-  if (!silent) status('', '불러오는 중…');
+  // 바로 열리면 깜빡임 없이 바꾸고, 0.12초 넘게 걸릴 때만 비우고 "불러오는 중" 표시
+  const waitT = setTimeout(() => { if (cur.page === p) { $('editor').innerHTML = ''; if (!silent) status('', '불러오는 중…'); } }, 120);
   let html = '';
-  try { html = await store.loadPage(p); }
-  catch (e) { handleErr(e, () => openPage(p)); return; }
+  // 옛 보관본을 먼저 보여 주고, 새 내용이 오면 (아직 안 고쳤을 때) 바꿔 끼움
+  const onFresh = h => {
+    if (cur.page !== p || dirty || editedSinceOpen) return;
+    const st = $('canvas').scrollTop; $('editor').innerHTML = sanitize(h) || '<p><br></p>'; hydrate(); updateSpellAttr(); $('canvas').scrollTop = st;
+  };
+  try { html = await store.loadPage(p, onFresh); }
+  catch (e) { clearTimeout(waitT); handleErr(e, () => openPage(p)); return; }
+  clearTimeout(waitT);
   if (cur.page !== p) return;
   // 저장되지 않은 임시 내용이 있으면 되살리기 제안
   let draft = null; try { draft = JSON.parse(localStorage.getItem('dn-draft-' + p.id) || 'null'); } catch {}
@@ -1199,18 +1205,30 @@ async function afterDriveLoad() {
   try { const n = await store.flushPending(id => findPage(id)?.p); if (n) { scheduleIndexSave(); toast(`인터넷이 끊겼을 때 쓴 페이지 ${n}개를 드라이브에 올렸어요.`); } } catch {}
   prefetchSection(cur.sec);
 }
+// 모든 페이지를 뒤에서 미리 받아 둠: 고른 섹션 먼저, 그다음 나머지 (한 번 받으면 다음부터 바로 열림)
 let prefetching = null;
 async function prefetchSection(sec) {
-  if (!sec || store?.kind !== 'drive' || !navigator.onLine) return;
+  if (store?.kind !== 'drive' || !navigator.onLine || !ix) return;
   const token = prefetching = {};
-  for (const p of sec.pages.slice(0, 60)) {
-    if (prefetching !== token) return; // 다른 섹션으로 바뀜
-    const c = await store.cachedPage(p);
-    if (c && (c.pending || (c.updated >= (p.updated || 0) && c.fid === p.fid))) continue;
-    try { await store.loadPage(p); } catch { return; }
-    await new Promise(r => setTimeout(r, 150));
-  }
+  const rest = allPages().filter(x => !x.nb.closed && x.sec !== sec).map(x => x.p);
+  const queue = [...(sec ? sec.pages : []), ...rest];
+  const worker = async () => {
+    while (queue.length) {
+      if (prefetching !== token) return; // 다른 섹션으로 바뀌면 그 섹션부터 다시
+      const p = queue.shift();
+      const c = await store.cachedPage(p);
+      if (c && (c.pending || (c.updated >= (p.updated || 0) && c.fid === p.fid))) continue;
+      if (!p.fid) continue;
+      try { await store.fetchPage(p); } catch (e) { if (e.offline || e.auth) return; }
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]); // 세 개씩 함께
 }
+// 페이지를 누르는 순간(손을 떼기 전)부터 받기 시작
+$('pageList').addEventListener('pointerdown', e => {
+  const li = e.target.closest('li[data-id]'); if (!li || store?.kind !== 'drive') return;
+  const h = findPage(li.dataset.id); if (h && h.p.fid) store.loadPage(h.p).catch(() => {});
+});
 // 새로 열 때마다 구글 로그인 버튼 한 번 (팝업은 버튼을 눌러야 열려서)
 function driveGate() {
   showEmpty(`<h2>구글 드라이브에 연결해 주세요</h2><p>노트는 내 구글 드라이브의 “에스 노트” 폴더에 저장돼요.</p><div class="btns"><button class="btn primary" id="gateGo">구글로 로그인</button><button class="btn" id="gateLocal">이 기기에서 체험하기</button></div>`);

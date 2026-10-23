@@ -242,15 +242,24 @@ export class DriveStore {
     return r.modifiedTime !== this.indexTime;
   }
   // 페이지: 기기에 보관한 것이 최신이면 바로 (드라이브에서 받지 않음)
-  async loadPage(p) {
+  // onFresh(html): 옛 보관본을 먼저 돌려준 뒤, 드라이브에서 새 내용을 받으면 알려 줌
+  async loadPage(p, onFresh) {
     const c = await this.cache.get('pages', p.id);
     if (c && (c.pending || (c.updated >= (p.updated || 0) && c.fid === p.fid))) return c.html;
     if (!p.fid) return c ? c.html : '';
-    try {
-      const html = await (await this.download(p.fid)).text();
+    if (c && onFresh) { this.fetchPage(p).then(h => { if (h !== c.html) onFresh(h); }).catch(() => {}); return c.html; }
+    try { return await this.fetchPage(p); }
+    catch (e) { if (c && (e.offline || e.auth)) return c.html; throw e; }
+  }
+  // 같은 페이지를 동시에 두 번 받지 않게 (누르는 순간 미리 받기 + 열기)
+  fetchPage(p) {
+    const k = p.id + ':' + p.fid + ':' + (p.updated || 0);
+    this.inflight ||= new Map();
+    if (!this.inflight.has(k)) this.inflight.set(k, this.download(p.fid).then(b => b.text()).then(html => {
       this.cache.put('pages', p.id, { html, updated: p.updated || 0, fid: p.fid });
       return html;
-    } catch (e) { if (c && (e.offline || e.auth)) return c.html; throw e; }
+    }).finally(() => this.inflight.delete(k)));
+    return this.inflight.get(k);
   }
   cachedPage(p) { return this.cache.get('pages', p.id); }
   // 저장: 먼저 기기에 (인터넷이 끊겨도 남음) → 드라이브에 올리면 "보냄" 표시
