@@ -391,8 +391,10 @@ body.focus .page { padding-top: 40px; }
 .fs-btn small { font-size: 10px; margin-left: 1px; }
 
 /* AI로 찾기 */
-.ai-search-btn { border: 0; background: rgba(255, 255, 255, .14); color: #fff; border-radius: 5px; padding: 2px 8px; font-size: 12px; white-space: nowrap; }
-.ai-search-btn:hover { background: rgba(255, 255, 255, .25); }
+.search-mode { border: 0; background: rgba(255, 255, 255, .14); color: #fff; border-radius: 5px; padding: 2px 8px; font-size: 12px; white-space: nowrap; }
+.search-mode:hover { background: rgba(255, 255, 255, .25); }
+.search-mode.on { background: #ffd54f; color: #3b2a00; font-weight: 600; }
+.search.ai { box-shadow: inset 0 0 0 1.5px #ffd54f; }
 #pageList .why { color: var(--brand); font-weight: 600; }
 .col-head button + button { margin-left: 6px; }
 /* AI 결과 검토 */

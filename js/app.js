@@ -265,10 +265,9 @@ function renderPages() {
   if (searchMode) {
     const hits = searchMode.ids.map(findPage).filter(Boolean);
     head.innerHTML = searchMode.loading ? `<span>✨ AI가 찾는 중… “${esc(searchMode.q)}”</span><button id="endSearch">닫기</button>`
-      : `<span>${searchMode.ai ? '✨ AI 검색' : '검색'} 결과 ${hits.length}개 · “${esc(searchMode.q)}”</span>${searchMode.ai ? '' : '<button id="aiAgain">✨ AI로 찾기</button>'}<button id="endSearch">닫기</button>`;
+      : `<span>${searchMode.ai ? '✨ AI 검색' : '검색'} 결과 ${hits.length}개 · “${esc(searchMode.q)}”</span><button id="endSearch">닫기</button>`;
     $('endSearch').onclick = endSearch;
-    $('aiAgain')?.addEventListener('click', () => runAISearch(searchMode.q));
-    ul.innerHTML = hits.map(({ sec, p }) => `<li data-id="${p.id}" class="${p === cur.page ? 'on' : ''}"><div class="row"><span class="name">${esc(p.title || '제목 없음')}</span></div><span class="snip">${searchMode.why?.[p.id] ? `<span class="why">✨ ${esc(searchMode.why[p.id])}</span> · ` : ''}${esc(sec.name)} · ${esc(p.snip || '')}</span></li>`).join('') || (searchMode.loading ? '' : `<li class="none"><span class="snip">${searchMode.ai ? 'AI도 맞는 페이지를 찾지 못했어요.' : '찾는 내용이 없어요. 위의 ✨ AI로 찾기를 눌러 보세요.'}</span></li>`);
+    ul.innerHTML = hits.map(({ sec, p }) => `<li data-id="${p.id}" class="${p === cur.page ? 'on' : ''}"><div class="row"><span class="name">${esc(p.title || '제목 없음')}</span></div><span class="snip">${searchMode.why?.[p.id] ? `<span class="why">✨ ${esc(searchMode.why[p.id])}</span> · ` : ''}${esc(sec.name)} · ${esc(p.snip || '')}</span></li>`).join('') || (searchMode.loading ? '' : `<li class="none"><span class="snip">${searchMode.ai ? 'AI도 맞는 페이지를 찾지 못했어요.' : '찾는 내용이 없어요. 뜻으로 찾고 싶으면 검색창 오른쪽 [일반]을 눌러 ✨ AI 검색으로 바꿔 보세요.'}</span></li>`);
     $('addPage').hidden = true;
     return;
   }
@@ -642,8 +641,39 @@ let dragItem = null;
 
 // ---------- 검색 ----------
 let searchTimer = 0;
-$('search').addEventListener('input', () => { clearTimeout(searchTimer); const q = $('search').value.trim(); if (!q) return endSearch(); searchTimer = setTimeout(() => runSearch(q), 450); });
-$('search').addEventListener('keydown', e => { if (e.key === 'Escape') { $('search').value = ''; endSearch(); } if (e.key === 'Enter') { clearTimeout(searchTimer); const q = $('search').value.trim(); if (q) runSearch(q); } });
+// 일반 검색: 적는 대로 바로 (무료, 기기 안에서). AI 검색: AI 모드로 바꾼 뒤 Enter를 눌렀을 때만 (한 번마다 요금)
+let aiSearchOn = false;
+function setSearchMode(on) {
+  aiSearchOn = on;
+  const b = $('searchMode'), box = $('search');
+  b.textContent = on ? '✨ AI' : '일반';
+  b.classList.toggle('on', on);
+  box.closest('.search').classList.toggle('ai', on);
+  box.placeholder = on ? '찾고 싶은 내용을 말하듯 적고 Enter (AI 요금 발생)' : '모든 노트 검색';
+}
+$('searchMode').onclick = () => {
+  setSearchMode(!aiSearchOn);
+  clearTimeout(searchTimer);
+  const q = $('search').value.trim();
+  if (!aiSearchOn && q) runSearch(q); // 일반으로 돌아오면 바로 무료 검색
+  if (aiSearchOn) toast('✨ AI 검색: 적고 Enter를 누를 때만 AI가 찾아요. 한 번 찾을 때마다 요금이 들어요.');
+  $('search').focus();
+};
+$('search').addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  const q = $('search').value.trim();
+  if (!q) return endSearch();
+  if (!aiSearchOn) searchTimer = setTimeout(() => runSearch(q), 450);
+});
+$('search').addEventListener('keydown', e => {
+  if (e.key === 'Escape') { $('search').value = ''; endSearch(); }
+  if (e.key === 'Enter') {
+    clearTimeout(searchTimer);
+    const q = $('search').value.trim(); if (!q) return;
+    if (aiSearchOn) { if (!(searchMode?.ai && searchMode.q === q)) runAISearch(q); } // 같은 걸 또 누르면 다시 요금 들지 않게
+    else runSearch(q);
+  }
+});
 async function runSearch(q) {
   await flush().catch(() => {});
   const k = q.toLowerCase(), list = allPages();
@@ -1125,7 +1155,6 @@ async function runAISearch(q) {
     renderPages();
   } catch (e) { searchMode = null; renderPages(); handleErr(e); }
 }
-$('aiSearchBtn').onclick = () => runAISearch($('search').value.trim());
 
 
 // ---------- 한글·엑셀 변환 ----------
