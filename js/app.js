@@ -285,9 +285,10 @@ function setNbFilter(v) {
 $('nbFilter').addEventListener('input', () => setNbFilter($('nbFilter').value));
 $('nbFilter').addEventListener('keydown', e => { if (e.key === 'Escape') setNbFilter(''); });
 $('nbFilterX').onclick = () => { setNbFilter(''); $('nbFilter').focus(); };
+const DRAG_ATTR = matchMedia('(pointer: fine)').matches ? ' draggable="true"' : '';
 function renderSections() {
   const ul = $('sectionList');
-  ul.innerHTML = (cur.nb?.sections || []).map(s => `<li data-id="${s.id}" class="${s === cur.sec ? 'on' : ''}" draggable="true" style="border-left-color:${s.color}"><span class="dot" style="background:${s.color}"></span><span class="name">${esc(s.name)}</span><button class="more" data-more="sec" aria-label="섹션 메뉴">⋯</button></li>`).join('');
+  ul.innerHTML = (cur.nb?.sections || []).map(s => `<li data-id="${s.id}" class="${s === cur.sec ? 'on' : ''}"${DRAG_ATTR} style="border-left-color:${s.color}"><span class="dot" style="background:${s.color}"></span><span class="name">${esc(s.name)}</span><button class="more" data-more="sec" aria-label="섹션 메뉴">⋯</button></li>`).join('');
   renderNotebook();
 }
 const fmtDate = t => t ? new Date(t).toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' }) : '';
@@ -305,7 +306,7 @@ function renderPages() {
   }
   $('addPage').hidden = !cur.sec;
   head.innerHTML = cur.sec ? `<span style="color:${cur.sec.color}">■</span><span>${esc(cur.sec.name)}</span>` : '';
-  ul.innerHTML = (cur.sec?.pages || []).map(p => `<li data-id="${p.id}" class="${p === cur.page ? 'on' : ''}${p.level ? ' sub' : ''}" draggable="true"><div class="row"><span class="name">${esc(p.title || '제목 없음')}</span><button class="more" data-more="page" aria-label="페이지 메뉴">⋯</button></div><span class="date">${fmtDate(p.updated || p.created)}</span></li>`).join('');
+  ul.innerHTML = (cur.sec?.pages || []).map(p => `<li data-id="${p.id}" class="${p === cur.page ? 'on' : ''}${p.level ? ' sub' : ''}"${DRAG_ATTR}><div class="row"><span class="name">${esc(p.title || '제목 없음')}</span><button class="more" data-more="page" aria-label="페이지 메뉴">⋯</button></div><span class="date">${fmtDate(p.updated || p.created)}</span></li>`).join('');
 }
 function showEmpty(html) { $('page').hidden = true; $('empty').hidden = false; $('empty').innerHTML = html; }
 function setView(v) {
@@ -314,7 +315,7 @@ function setView(v) {
 }
 $('navBack').onclick = () => setView($('shell').dataset.view === 'page' ? 'pages' : 'sections');
 
-// 목록 접기·펴기 (컴퓨터: ☰ / 전체 페이지 보기, 폴드: 글을 누르면 접히고 ☰로 다시 펼침)
+// 목록 접기·펴기 (☰ / 전체 페이지 보기). 글을 눌러도 저절로 접히지 않음
 let navOff = false;
 try { navOff = localStorage.getItem('dn-nav-off') === '1'; } catch {}
 function applyNav() {
@@ -323,7 +324,14 @@ function applyNav() {
   $('navToggle').title = off ? '목록 펴기' : '목록 접기 (전체 페이지 보기)';
   $('navToggle').classList.toggle('on', !off);
 }
-function setNav(off) { navOff = off; try { localStorage.setItem('dn-nav-off', off ? '1' : '0'); } catch {} applyNav(); }
+function setNav(off) {
+  // 목록을 접고 펴면 글 너비가 바뀌어 줄이 다시 나뉨 → 보고 있던 줄이 화면 같은 자리에 오도록 맞춤
+  const cv = $('canvas'), top = cv.getBoundingClientRect().top;
+  const anchor = [...$('editor').children].find(el => el.getBoundingClientRect().bottom > top + 1);
+  const before = anchor ? anchor.getBoundingClientRect().top : 0;
+  navOff = off; try { localStorage.setItem('dn-nav-off', off ? '1' : '0'); } catch {} applyNav();
+  if (anchor && cv.scrollTop > 0) cv.scrollTop += anchor.getBoundingClientRect().top - before;
+}
 $('navToggle').onclick = () => setNav(!navOff);
 $('fullView').onclick = () => setNav(true);
 // 글만 보기: 메뉴·목록을 모두 숨기고 제목과 글만
@@ -341,7 +349,7 @@ function applyWrap() {
   const b = $('nowrapBtn'); b.classList.toggle('is-on', !!S.nowrap); b.querySelector('b').textContent = S.nowrap ? '켬' : '끔';
 }
 $('nowrapBtn').onclick = () => { S.nowrap = !S.nowrap; saveSettings(); toast(S.nowrap ? '줄을 바꾸지 않고 옆으로 이어 써요. 옆으로 스크롤해서 보세요.' : '창 너비에 맞춰 줄을 바꿔요.'); };
-$('canvas').addEventListener('click', () => { if (fold() && !navOff && cur.page) setNav(true); });
+// (예전: 폴드에서 글을 누르면 목록이 저절로 접혔음 → 화면이 바뀌고 글 위치가 움직여 어지러워서 없앰. ☰로만 접고 폄)
 applyNav();
 
 // ---------- 페이지 열기 ----------
@@ -471,13 +479,15 @@ function sectionMenu(sec, at) {
   const i = cur.nb.sections.indexOf(sec);
   const c = showCtx(`<button data-a="rename">이름 바꾸기</button><div class="colors">${SECTION_COLORS.map(col => `<button data-color="${col}" style="background:${col}" aria-label="색"></button>`).join('')}</div><hr>
     <button data-a="up" ${i ? '' : 'disabled'}>위로</button><button data-a="down" ${i < cur.nb.sections.length - 1 ? '' : 'disabled'}>아래로</button>
-    <button data-a="move">다른 전자 필기장으로 옮기기</button><hr><button data-a="del" class="danger">섹션 삭제</button>`, at);
+    <button data-a="move">다른 전자 필기장으로 옮기기</button><button data-a="dup">섹션 복사본 만들기</button><button data-a="copyTo">다른 전자 필기장에 복사</button><hr><button data-a="del" class="danger">섹션 삭제</button>`, at);
   c.onclick = async e => {
     const b = e.target.closest('button'); if (!b) return; c.hidden = true;
     if (b.dataset.color) { sec.color = b.dataset.color; }
     else if (b.dataset.a === 'rename') { const n = await ask('섹션 이름 바꾸기', '섹션 이름', sec.name); if (!n) return; sec.name = n; }
     else if (b.dataset.a === 'up' || b.dataset.a === 'down') { const j = i + (b.dataset.a === 'up' ? -1 : 1); cur.nb.sections.splice(i, 1); cur.nb.sections.splice(j, 0, sec); }
     else if (b.dataset.a === 'move') { const to = await pickNotebook(cur.nb); if (!to) return; cur.nb.sections.splice(cur.nb.sections.indexOf(sec), 1); to.sections.push(sec); if (cur.sec === sec) { cur.nb = to; renderNotebook(); } }
+    else if (b.dataset.a === 'dup') { await copySection(sec, cur.nb); return; }
+    else if (b.dataset.a === 'copyTo') { const to = await pickNotebook(cur.nb, '복사'); if (!to) return; await copySection(sec, to); return; }
     else if (b.dataset.a === 'del') {
       if (!(await confirmDelete(`“${sec.name}” 섹션 삭제`, `이 섹션의 페이지 ${sec.pages.length}개도 함께 지워져요.${trashNote()}`))) return;
       cur.nb.sections.splice(cur.nb.sections.indexOf(sec), 1);
@@ -491,7 +501,7 @@ function pageMenu(p, at) {
   const sec = cur.sec.pages.includes(p) ? cur.sec : findPage(p.id).sec, i = sec.pages.indexOf(p);
   const c = showCtx(`<button data-a="rename">이름 바꾸기</button><button data-a="sub">${p.level ? '하위 페이지 해제' : '하위 페이지로 만들기'}</button><button data-a="child">아래에 하위 페이지 추가</button>
     <button data-a="up" ${i ? '' : 'disabled'}>위로</button><button data-a="down" ${i < sec.pages.length - 1 ? '' : 'disabled'}>아래로</button>
-    <button data-a="move">다른 섹션으로 옮기기</button><button data-a="copy">복사본 만들기</button><hr><button data-a="del" class="danger">페이지 삭제</button>`, at);
+    <button data-a="move">다른 섹션으로 옮기기</button><button data-a="copy">복사본 만들기</button><button data-a="copyTo">다른 섹션에 복사</button><hr><button data-a="del" class="danger">페이지 삭제</button>`, at);
   c.onclick = async e => {
     const b = e.target.closest('button'); if (!b) return; c.hidden = true;
     const a = b.dataset.a;
@@ -510,11 +520,14 @@ function pageMenu(p, at) {
       if (p === cur.page) openPage(sec.pages[0] || null);
     }
     else if (a === 'copy') {
-      if (p === cur.page) await flush();
-      const html = p === cur.page ? serialize() : await store.loadPage(p).catch(() => '');
-      const now = Date.now(), np = { id: uid(), title: (p.title || '제목 없음') + ' (복사본)', created: now, updated: now, level: p.level, snip: p.snip };
+      const np = await copyPage(p, (p.title || '제목 없음') + ' (복사본)'); if (!np) return;
       sec.pages.splice(i + 1, 0, np);
-      try { await store.savePage(np, html); } catch (er) { handleErr(er); }
+    }
+    else if (a === 'copyTo') {
+      const to = await pickSection(sec, '복사'); if (!to) return;
+      const np = await copyPage(p, p.title || ''); if (!np) return;
+      np.level = 0; to.pages.push(np);
+      toast(`“${p.title || '제목 없음'}”을(를) ${to.name} 섹션에 복사했어요.`);
     }
     else if (a === 'del') {
       if (!(await confirmDelete(`“${p.title || '제목 없음'}” 페이지 삭제`, `이 페이지를 지울까요?${trashNote()}`))) return;
@@ -525,20 +538,43 @@ function pageMenu(p, at) {
     scheduleIndexSave(); renderPages();
   };
 }
-function pickSection(from) {
+// 페이지 복사: 내용을 새 페이지 파일로 저장 (그림·첨부 파일은 원래 파일을 같이 씀 — 페이지를 지워도 파일은 남음)
+async function copyPage(p, title) {
+  try {
+    if (p === cur.page) await flush();
+    const html = p === cur.page ? serialize() : await store.loadPage(p);
+    const now = Date.now(), np = { id: uid(), title, created: now, updated: now, level: p.level || 0, snip: p.snip };
+    await store.savePage(np, html || '');
+    return np;
+  } catch (er) { handleErr(er); return null; }
+}
+// 섹션 복사: 같은 전자 필기장이면 바로 아래에 "(복사본)", 다른 전자 필기장이면 맨 아래에 같은 이름으로
+async function copySection(sec, toNb) {
+  const same = toNb.sections.includes(sec);
+  const ns = { ...sec, id: uid(), name: same ? sec.name + ' (복사본)' : sec.name, pages: [] };
+  for (let k = 0; k < sec.pages.length; k++) {
+    toast(`섹션 복사 중… ${k + 1} / ${sec.pages.length}`);
+    const np = await copyPage(sec.pages[k], sec.pages[k].title || ''); if (!np) return;
+    np.level = sec.pages[k].level || 0; ns.pages.push(np);
+  }
+  if (same) toNb.sections.splice(toNb.sections.indexOf(sec) + 1, 0, ns); else toNb.sections.push(ns);
+  scheduleIndexSave(); renderSections(); renderPages();
+  toast(`“${sec.name}” 섹션을 ${same ? '복사했어요' : toNb.name + '에 복사했어요'}. (페이지 ${ns.pages.length}개)`);
+}
+function pickSection(from, verb = '옮기') {
   return new Promise(res => {
     const opts = allSections().filter(x => x.sec !== from && !x.nb.closed);
-    if (!opts.length) { toast('옮길 다른 섹션이 없어요.'); return res(null); }
-    modal(`<h2>어느 섹션으로 옮길까요?</h2>${opts.map((x, k) => `<button class="choice" data-k="${k}"><b><span style="color:${x.sec.color}">■</span> ${esc(x.sec.name)}</b><small>${esc(x.nb.name)}</small></button>`).join('')}<div class="row"><button class="btn" id="pNo">취소</button></div>`, m => {
+    if (!opts.length) { toast('다른 섹션이 없어요. 먼저 섹션을 만드세요.'); return res(null); }
+    modal(`<h2>어느 섹션으로 ${verb === '복사' ? '복사할' : '옮길'}까요?</h2>${opts.map((x, k) => `<button class="choice" data-k="${k}"><b><span style="color:${x.sec.color}">■</span> ${esc(x.sec.name)}</b><small>${esc(x.nb.name)}</small></button>`).join('')}<div class="row"><button class="btn" id="pNo">취소</button></div>`, m => {
       m.onclick = e => { const b = e.target.closest('[data-k]'); if (b) { closeModal(); res(opts[+b.dataset.k].sec); } else if (e.target.id === 'pNo') { closeModal(); res(null); } };
     });
   });
 }
-function pickNotebook(from) {
+function pickNotebook(from, verb = '옮기') {
   return new Promise(res => {
     const opts = openNbs_().filter(n => n !== from);
     if (!opts.length) { toast('다른 전자 필기장이 없어요. 먼저 새 전자 필기장을 만드세요.'); return res(null); }
-    modal(`<h2>어느 전자 필기장으로 옮길까요?</h2>${opts.map((n, k) => `<button class="choice" data-k="${k}"><b>${esc(n.name)}</b><small>섹션 ${n.sections.length}개</small></button>`).join('')}<div class="row"><button class="btn" id="pNo">취소</button></div>`, m => {
+    modal(`<h2>어느 전자 필기장으로 ${verb === '복사' ? '복사할' : '옮길'}까요?</h2>${opts.map((n, k) => `<button class="choice" data-k="${k}"><b>${esc(n.name)}</b><small>섹션 ${n.sections.length}개</small></button>`).join('')}<div class="row"><button class="btn" id="pNo">취소</button></div>`, m => {
       m.onclick = e => { const b = e.target.closest('[data-k]'); if (b) { closeModal(); res(opts[+b.dataset.k]); } else if (e.target.id === 'pNo') { closeModal(); res(null); } };
     });
   });
@@ -633,9 +669,20 @@ $('nbList').addEventListener('contextmenu', e => {
 });
 $('addNotebook').onclick = () => addNotebook();
 $('openNotebook').onclick = () => openNotebookModal();
+// 배열에서 item을 target 앞(또는 뒤)으로 옮김
+function moveInArray(arr, item, target, after) {
+  if (item === target) return;
+  arr.splice(arr.indexOf(item), 1);
+  arr.splice(arr.indexOf(target) + (after ? 1 : 0), 0, item);
+}
 function notebookMenu(nb, at) {
-  const c = showCtx(`<button data-a="rename">이름 바꾸기</button><button data-a="close">전자 필기장 닫기</button><hr><button data-a="del" class="danger">전자 필기장 삭제</button>`, at);
-  c.onclick = e => { const b = e.target.closest('button'); if (!b) return; c.hidden = true; if (b.dataset.a === 'rename') renameNotebook(nb); else if (b.dataset.a === 'close') closeNotebook(nb); else deleteNotebook(nb); };
+  const vis = openNbs_(), k = vis.indexOf(nb);
+  const c = showCtx(`<button data-a="rename">이름 바꾸기</button><button data-a="up" ${k > 0 ? '' : 'disabled'}>위로</button><button data-a="down" ${k < vis.length - 1 ? '' : 'disabled'}>아래로</button><button data-a="close">전자 필기장 닫기</button><hr><button data-a="del" class="danger">전자 필기장 삭제</button>`, at);
+  c.onclick = e => {
+    const b = e.target.closest('button'); if (!b) return; c.hidden = true;
+    if (b.dataset.a === 'up' || b.dataset.a === 'down') { const other = vis[k + (b.dataset.a === 'up' ? -1 : 1)]; moveInArray(ix.notebooks, nb, other, b.dataset.a === 'down'); scheduleIndexSave(); renderNotebook(); }
+    else if (b.dataset.a === 'rename') renameNotebook(nb); else if (b.dataset.a === 'close') closeNotebook(nb); else deleteNotebook(nb);
+  };
 }
 
 // 끌어서 순서 바꾸기 · 페이지를 섹션으로 옮기기
@@ -669,6 +716,101 @@ let dragItem = null;
     dragItem = null; scheduleIndexSave();
   });
   ul.addEventListener('dragend', () => { dragItem = null; document.querySelectorAll('.drop-before, .drop-into').forEach(x => x.classList.remove('drop-before', 'drop-into')); });
+});
+
+// ---------- 꾹 눌러 위아래로 옮기기 (휴대폰·태블릿) ----------
+// 꾹 누르면 진동 → 그대로 끌어서 놓으면 그 자리로. 꾹 눌렀다가 움직이지 않고 떼면 메뉴
+function setupLongPressMove(ul, { canDrag, drop }) {
+  let st = null, timer = 0, skipCtx = false;
+  const clear = () => {
+    clearTimeout(timer); timer = 0;
+    if (st?.li) st.li.classList.remove('lp-lift');
+    ul.querySelectorAll('.lp-before, .lp-after').forEach(x => x.classList.remove('lp-before', 'lp-after'));
+    st = null;
+  };
+  const target = (x, y) => {
+    const el = document.elementFromPoint(x, y)?.closest('li');
+    if (!el || !ul.contains(el) || el === st.li || el.classList.contains('none')) return null;
+    const r = el.getBoundingClientRect();
+    return { el, after: y > r.top + r.height / 2 };
+  };
+  ul.addEventListener('touchstart', e => {
+    if (e.touches.length !== 1) return clear();
+    const li = e.target.closest('li'); if (!li || !canDrag(li) || e.target.closest('[data-more], [data-chev]')) return;
+    const t = e.touches[0];
+    st = { li, x: t.clientX, y: t.clientY, active: false };
+    timer = setTimeout(() => {
+      if (!st) return;
+      st.active = true; skipCtx = true;
+      navigator.vibrate?.(30);
+      li.classList.add('lp-lift');
+    }, 450);
+  }, { passive: true });
+  ul.addEventListener('touchmove', e => {
+    if (!st) return;
+    const t = e.touches[0];
+    if (!st.active) { if (Math.hypot(t.clientX - st.x, t.clientY - st.y) > 10) clear(); return; }
+    e.preventDefault(); // 끄는 동안 화면이 밀리지 않게
+    st.moved = true;
+    // 목록 위·아래 끝 근처면 목록을 굴림
+    const box = ul.getBoundingClientRect();
+    if (t.clientY < box.top + 40) ul.scrollTop -= 10; else if (t.clientY > box.bottom - 40) ul.scrollTop += 10;
+    ul.querySelectorAll('.lp-before, .lp-after').forEach(x => x.classList.remove('lp-before', 'lp-after'));
+    const tg = target(t.clientX, t.clientY); st.tg = tg;
+    if (tg) tg.el.classList.add(tg.after ? 'lp-after' : 'lp-before');
+  }, { passive: false });
+  ul.addEventListener('touchend', e => {
+    if (!st) return;
+    if (!st.active) return clear();
+    e.preventDefault(); // 놓을 때 누르기(click)로 처리되지 않게
+    const { li, tg, moved, x, y } = st;
+    clear();
+    if (moved && tg) { drop(li, tg.el, tg.after); scheduleIndexSave(); }
+    else if (!moved) { skipCtx = false; li.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: x, clientY: y })); }
+    setTimeout(() => { skipCtx = false; }, 400);
+  }, { passive: false });
+  ul.addEventListener('touchcancel', clear);
+  // 꾹 누를 때 휴대폰이 스스로 띄우는 메뉴(contextmenu)는 막음 — 떼었을 때 위에서 직접 띄움
+  ul.addEventListener('contextmenu', e => { if (skipCtx) { e.preventDefault(); e.stopImmediatePropagation(); } }, true);
+}
+// 페이지: 같은 섹션 안에서 순서
+setupLongPressMove($('pageList'), {
+  canDrag: li => !searchMode && !!li.dataset.id,
+  drop: (li, to, after) => {
+    const a = cur.sec.pages.find(p => p.id === li.dataset.id), b = cur.sec.pages.find(p => p.id === to.dataset.id);
+    if (a && b) moveInArray(cur.sec.pages, a, b, after);
+    renderPages();
+  },
+});
+// 섹션 (폴드·휴대폰의 섹션 칸): 같은 전자 필기장 안에서 순서
+setupLongPressMove($('sectionList'), {
+  canDrag: li => !!li.dataset.id,
+  drop: (li, to, after) => {
+    const a = cur.nb.sections.find(x => x.id === li.dataset.id), b = cur.nb.sections.find(x => x.id === to.dataset.id);
+    if (a && b) moveInArray(cur.nb.sections, a, b, after);
+    renderSections();
+  },
+});
+// 전자 필기장 칸(트리): 전자 필기장끼리 순서, 섹션은 다른 전자 필기장으로도 옮길 수 있음
+setupLongPressMove($('nbList'), {
+  canDrag: li => !nbQ && (li.classList.contains('nb-item') || (li.dataset.sec && !li.dataset.addsec)),
+  drop: (li, to, after) => {
+    const nbOf = el => ix.notebooks.find(n => n.id === (el.dataset.nb || el.dataset.addsec || el.dataset.id));
+    if (li.classList.contains('nb-item')) { // 전자 필기장 옮기기: 놓은 줄이 속한 전자 필기장 앞·뒤로
+      const a = nbOf(li), b = nbOf(to); if (!a || !b || a === b) return;
+      moveInArray(ix.notebooks, a, b, to.classList.contains('nb-item') ? after : true);
+    } else { // 섹션 옮기기
+      const fromNb = nbOf(li), sec = fromNb?.sections.find(x => x.id === li.dataset.sec), toNb = nbOf(to); if (!sec || !toNb) return;
+      fromNb.sections.splice(fromNb.sections.indexOf(sec), 1);
+      const tsec = to.dataset.sec ? toNb.sections.find(x => x.id === to.dataset.sec) : null;
+      if (tsec) toNb.sections.splice(toNb.sections.indexOf(tsec) + (after ? 1 : 0), 0, sec);
+      else if (to.classList.contains('nb-item') && after) toNb.sections.unshift(sec);
+      else toNb.sections.push(sec);
+      if (cur.sec === sec && toNb !== cur.nb) cur.nb = toNb;
+      if (fromNb !== toNb) { openNbs.add(toNb.id); saveOpenNbs(); }
+    }
+    renderNotebook(); renderSections();
+  },
 });
 
 // ---------- 검색 ----------
@@ -1252,7 +1394,7 @@ function settingsModal() {
     <div class="set"><h3>자동 서식</h3>
       ${sw('auto', '자동 목록 사용', '줄 맨 앞에 아래 글자를 쓰고 띄어쓰기를 하면 목록으로 바뀌어요. 끄면 쓴 그대로 남아요.')}
       ${sw('autoNumber', '“1. ” “1) ” → 번호 목록', '', 'sub-sw')}
-      ${sw('autoBullet', '“- ” “* ” → 글머리 기호', '', 'sub-sw')}
+      ${sw('autoBullet', '“- ” “* ” “ㅁ ” “: ” → 글머리 기호', '', 'sub-sw')}
       ${sw('autoCheck', '“[] ” → 할 일(체크박스)', '', 'sub-sw')}
       <p style="font-size:12.5px">바뀐 직후 <b>백스페이스</b>를 누르면 그 한 번만 원래 글자로 되돌아가요.</p></div>
     <div class="set"><h3>그림</h3>${sw('shrink', '큰 사진은 줄여서 올리기', '긴 쪽 1600픽셀로 줄여 저장공간을 아껴요. 끄면 원본 그대로 올려요.')}</div>

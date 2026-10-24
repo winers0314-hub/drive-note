@@ -10,6 +10,7 @@ export function setupEditor(editor, options) {
   ed = editor; opt = options;
   document.execCommand('defaultParagraphSeparator', false, 'p');
   ed.addEventListener('input', onInput);
+  ed.addEventListener('compositionend', () => setTimeout(() => tryAuto(), 0)); // 한글 입력(ㅁ 등) 뒤 띄어쓰기
   ed.addEventListener('keydown', onKey);
   ed.addEventListener('click', onClick);
   ed.addEventListener('paste', onPaste);
@@ -75,15 +76,20 @@ function closest(sel_) {
 export const caretIn = s => closest(s);
 
 // ---------- 자동 서식 ----------
-// "1. " "1) " → 번호 목록, "- " → 대시 목록, "* " "• " → 동그라미 목록, "[] " "[ ] " → 할 일
+// "1. " "1) " → 번호 목록, "- " → 대시 목록, "* " "• " "ㅁ " → 동그라미 목록, ": " → 쌍점 목록, "[] " "[ ] " → 할 일
 function onInput(e) {
   if (selImg && !ed.contains(selImg)) hideImgBar();
   changed();
   if (e.inputType === 'insertParagraph') { // 할 일에서 새 줄은 체크 해제 상태로
     const li = closest('ul.checklist > li'); if (li) li.removeAttribute('data-checked');
+    splitContinuation();
     return;
   }
-  if (e.inputType !== 'insertText' || (e.data !== ' ' && e.data !== '\u00a0')) return;
+  if (e.isComposing) return; // 한글 조합 중에는 건드리지 않음 (조합이 끝나면 compositionend에서 다시 봄)
+  if (!/^insert(Text|CompositionText)$/.test(e.inputType) || !/[ \u00a0]$/.test(e.data || '')) return;
+  tryAuto();
+}
+function tryAuto() {
   const set = opt.settings();
   if (!set.auto) return;
   const s = sel(); if (!s.rangeCount || !s.isCollapsed) return;
@@ -92,17 +98,17 @@ function onInput(e) {
   const block = li0 || closest('p, div, h1, h2, h3, blockquote') || ed;
   const r = document.createRange(); r.setStart(block, 0); r.setEnd(s.anchorNode, s.anchorOffset);
   const typed = r.toString().replace(/\u00a0/g, ' ');
-  // "1. " → 번호, "- " → 대시(-), "* " "• " → 동그라미, "[] " → 할 일
+  // "1. " → 번호, "- " → 대시(-), "* " "• " "ㅁ " → 동그라미, ": " → 쌍점(:), "[] " → 할 일
   let kind = null, start = 1, m;
   if (set.autoNumber && (m = typed.match(/^(\d{1,3})[.)] $/))) { kind = 'ol'; start = +m[1]; }
   else if (set.autoBullet && typed === '- ') kind = 'dash';
-  else if (set.autoBullet && /^[*•] $/.test(typed)) kind = 'ul';
+  else if (set.autoBullet && typed === ': ') kind = 'colon';
+  else if (set.autoBullet && /^[*•ㅁ] $/.test(typed)) kind = 'ul';
   else if (set.autoCheck && /^\[ ?\] $/.test(typed)) kind = 'check';
   if (!kind) return;
   if (li0) { // 목록 안의 새 줄: 그 줄만 다른 목록으로 (예: "2." 줄에서 "- " → 대시 줄)
     const pl = li0.parentNode;
-    const now = pl.tagName === 'OL' ? 'ol' : pl.classList.contains('checklist') ? 'check' : pl.classList.contains('dash') ? 'dash' : 'ul';
-    if (now === kind) return;
+    if (listKind(pl) === kind) return;
     s.removeAllRanges(); s.addRange(r); document.execCommand('delete');
     switchListItem(li0, kind, start);
     changed(); return;
@@ -125,17 +131,18 @@ function onInput(e) {
   } else {
     if (list && kind === 'check') list.classList.add('checklist');
     if (list && kind === 'dash') list.classList.add('dash');
+    if (list && kind === 'colon') list.classList.add('colon');
   }
   lastAuto = { li: closest('li'), text: typed, kind };
   opt.onAuto?.(kind, undoAuto);
   changed();
 }
-const listKind = l => l.tagName === 'OL' ? 'ol' : l.classList.contains('checklist') ? 'check' : l.classList.contains('dash') ? 'dash' : 'ul';
+const listKind = l => l.tagName === 'OL' ? 'ol' : l.classList.contains('checklist') ? 'check' : l.classList.contains('dash') ? 'dash' : l.classList.contains('colon') ? 'colon' : 'ul';
 // 목록의 한 줄만 다른 종류의 목록으로 떼어 냄 (앞뒤 줄은 원래 목록 그대로)
 function switchListItem(li, kind, start) {
   const list = li.parentNode, items = [...list.children], i = items.indexOf(li), after = items.slice(i + 1);
   const nl = document.createElement(kind === 'ol' ? 'ol' : 'ul');
-  if (kind === 'dash') nl.className = 'dash'; if (kind === 'check') nl.className = 'checklist';
+  if (kind === 'dash' || kind === 'colon') nl.className = kind; if (kind === 'check') nl.className = 'checklist';
   if (kind === 'ol' && start !== 1) nl.setAttribute('start', start);
   list.after(nl); nl.append(li);
   if (after.length) {
@@ -155,7 +162,7 @@ export function undoAuto() {
   const r = document.createRange(); r.selectNodeContents(a.li); r.collapse(true);
   const s = sel(); s.removeAllRanges(); s.addRange(r);
   ed.focus();
-  a.li.parentNode.classList.remove('dash');
+  a.li.parentNode.classList.remove('dash', 'colon');
   document.execCommand(a.kind === 'ol' ? 'insertOrderedList' : 'insertUnorderedList');
   document.execCommand('insertText', false, a.text);
   changed();
@@ -164,9 +171,10 @@ export function undoAuto() {
 function onKey(e) {
   if (lastAuto && e.key === 'Backspace') {
     const li = closest('li'), s = sel();
-    if (li === lastAuto.li && s.isCollapsed && atStart(li)) { e.preventDefault(); undoAuto(); return; }
+    if (li && li === lastAuto.li && s.isCollapsed && atStart(li)) { e.preventDefault(); undoAuto(); return; }
   }
   if (e.key !== 'Shift' && e.key !== 'Control') lastAuto = e.key === 'Backspace' ? lastAuto : null;
+  if (e.key === 'Backspace' && !e.shiftKey && !e.ctrlKey && !e.metaKey && listBackspace()) { e.preventDefault(); changed(); return; }
   if (e.key === 'Tab') {
     const td = closest('td, th');
     if (td) { e.preventDefault(); moveCell(td, e.shiftKey ? -1 : 1); return; }
@@ -174,6 +182,85 @@ function onKey(e) {
     if (!e.shiftKey) { e.preventDefault(); document.execCommand('insertText', false, '    '); }
   }
   if ((e.key === 'Delete' || e.key === 'Backspace') && selImg) { e.preventDefault(); selImg.remove(); hideImgBar(); changed(); }
+}
+// 목록 줄 맨 앞에서 지우기 (원노트처럼)
+//  1번째: 기호(- 1.)만 없어지고 글은 윗줄 글과 같은 자리에 맞춰짐 (윗줄 항목에 이어 쓰는 줄)
+//  2번째: 그 줄이 목록에서 빠져 맨 왼쪽으로. 커서는 그 줄에 그대로
+function listBackspace() {
+  const s = sel(); if (!s.rangeCount || !s.isCollapsed) return false;
+  const li = closest('li'); if (!li) return false;
+  let n = s.anchorNode;
+  if (n === li) n = li.childNodes[s.anchorOffset] || li.lastChild;
+  while (n && n.parentNode !== li) n = n.parentNode;
+  if (!n) return false;
+  const isBlock = x => x.nodeType === 1 && /^(DIV|P)$/.test(x.tagName);
+  const hasBefore = x => { for (let p = x.previousSibling; p; p = p.previousSibling) if (p.textContent.trim() || (p.nodeType === 1 && p.tagName !== 'BR')) return true; return false; };
+  if (isBlock(n) && hasBefore(n)) { // 이어 쓰는 줄의 맨 앞 → 목록에서 빼기
+    if (!atStart(n)) return false;
+    liftOut(li, n); return true;
+  }
+  if (!atStart(li)) return false;
+  const prev = li.previousElementSibling;
+  if (prev && prev.tagName === 'LI') { // 윗 항목에 이어 쓰는 줄로
+    const line = document.createElement('div');
+    while (li.firstChild && !isBlock(li.firstChild) && !/^(UL|OL)$/.test(li.firstChild.nodeName)) line.append(li.firstChild);
+    if (!line.textContent && !line.querySelector('img, br')) line.innerHTML = '<br>';
+    prev.append(line, ...li.childNodes); li.remove();
+    caretAt(line); return true;
+  }
+  liftOut(li, null); return true; // 목록의 첫 줄 → 바로 맨 왼쪽으로
+}
+// 이어 쓰는 줄에서 엔터: 새 줄은 다음 항목(기호 있는 줄)이 됨
+function splitContinuation() {
+  const li = closest('li'), s = sel(); if (!li || !s.rangeCount) return;
+  let n = s.anchorNode; if (n === li) return;
+  while (n && n.parentNode !== li) n = n.parentNode;
+  // 크롬이 새 항목을 <li><div>…</div></li>로 만든 경우: div를 풀어 보통 항목으로
+  if (n && n === li.firstChild && li.childNodes.length === 1 && n.nodeType === 1 && n.tagName === 'DIV') {
+    n.replaceWith(...(n.childNodes.length ? n.childNodes : [document.createElement('br')])); caretAt(li); return;
+  }
+  if (!n || n.nodeType !== 1 || !/^(DIV|P)$/.test(n.tagName) || !n.previousSibling) return;
+  const prevBlock = n.previousElementSibling;
+  if (!prevBlock || !/^(DIV|P)$/.test(prevBlock.tagName)) return; // 이어 쓰는 줄에서 엔터를 쳐서 생긴 새 줄일 때만
+  const nli = document.createElement('li');
+  for (let x = n; x; ) { const nx = x.nextSibling; nli.append(x); x = nx; }
+  const first = nli.firstChild; // 첫 줄은 감싼 div를 풀어 li 글로
+  if (first && first.nodeType === 1 && /^(DIV|P)$/.test(first.tagName)) first.replaceWith(...(first.childNodes.length ? first.childNodes : [document.createElement('br')]));
+  li.after(nli); caretAt(nli);
+}
+// li 안의 줄(block, 없으면 li 전체)을 목록 밖 맨 왼쪽 줄로 꺼냄. 아래 항목들은 새 목록으로 이어짐
+function liftOut(li, block) {
+  const list = li.parentNode, items = [...list.children], i = items.indexOf(li);
+  const out = [];
+  if (block) {
+    for (let x = block; x; ) { const nx = x.nextSibling; out.push(x); x = nx; }
+  } else {
+    const p = document.createElement('p');
+    while (li.firstChild && !/^(DIV|P|UL|OL)$/.test(li.firstChild.nodeName)) p.append(li.firstChild);
+    out.push(p, ...li.childNodes);
+  }
+  const lines = out.map(x => {
+    if (x.nodeType === 1 && /^(P|DIV|UL|OL)$/.test(x.tagName)) return x;
+    const p = document.createElement('p'); p.append(x); return p;
+  }).map(x => { if (x.tagName === 'DIV') { const p = document.createElement('p'); p.append(...x.childNodes); x.remove(); return p; } return x; });
+  lines.forEach(x => { if (/^P$/.test(x.tagName) && !x.textContent && !x.querySelector('img, br')) x.innerHTML = '<br>'; });
+  const keepLi = !!block;
+  if (!keepLi) li.remove();
+  const after = items.slice(i + 1);
+  let tail = list;
+  if (lines.length) { tail.after(...lines); tail = lines[lines.length - 1]; }
+  if (after.length) {
+    const rest = list.cloneNode(false);
+    if (list.tagName === 'OL') rest.setAttribute('start', (parseInt(list.getAttribute('start'), 10) || 1) + i + (keepLi ? 1 : 0));
+    tail.after(rest); rest.append(...after);
+  }
+  if (!list.children.length) list.remove();
+  caretAt(lines[0]);
+}
+function caretAt(el) {
+  if (!el) return;
+  const r = document.createRange(); r.selectNodeContents(el); r.collapse(true);
+  const s = sel(); s.removeAllRanges(); s.addRange(r);
 }
 function atStart(el) {
   const s = sel(); const r = document.createRange(); r.selectNodeContents(el); r.setEnd(s.anchorNode, s.anchorOffset);

@@ -108,7 +108,7 @@ function listXml(list, st, ctx, w) {
   const depth = (ctx.depth || 0) + 1;
   for (const li of list.children) {
     if (li.tagName !== 'LI') continue;
-    const prefix = check ? (li.hasAttribute('data-checked') ? '☑ ' : '☐ ') : ordered ? (n++) + '. ' : list.classList.contains('dash') ? '- ' : (depth % 2 ? '• ' : '◦ ');
+    const prefix = check ? (li.hasAttribute('data-checked') ? '☑ ' : '☐ ') : ordered ? (n++) + '. ' : list.classList.contains('dash') ? '- ' : list.classList.contains('colon') ? ': ' : (depth % 2 ? '• ' : '◦ ');
     const c2 = { ...ctx, depth, left: ctx.left + depth * 1500, align: blockAlign(li) || ctx.align, prefix };
     const s2 = check && li.hasAttribute('data-checked') ? { ...styleOf(li, st), s: true, color: '#888888' } : styleOf(li, st);
     w.start(c2);

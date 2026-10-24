@@ -150,6 +150,11 @@ body.resizing iframe, body.resizing .canvas { pointer-events: none; }
 .list li .more:hover { background: var(--line); }
 .list li.drop-before { box-shadow: inset 0 2px 0 var(--brand); }
 .list li.drop-into { outline: 2px dashed var(--brand); outline-offset: -2px; }
+/* 꾹 눌러 옮기기 */
+.list li { -webkit-touch-callout: none; }
+.list li.lp-lift { background: var(--sel); box-shadow: 0 4px 14px rgba(0, 0, 0, .18); transform: scale(1.02); z-index: 2; }
+.list li.lp-before { box-shadow: inset 0 3px 0 var(--brand); }
+.list li.lp-after { box-shadow: inset 0 -3px 0 var(--brand); }
 #sectionList li .dot { width: 10px; height: 10px; border-radius: 3px; flex: none; }
 #pageList li { flex-direction: column; align-items: stretch; gap: 0; padding: 7px 10px; }
 #pageList li .row { display: flex; align-items: center; gap: 6px; }
@@ -198,7 +203,10 @@ body.focus .page { padding-top: 40px; }
 .editor { outline: none; min-height: 50vh; font-size: 15px; line-height: 1.7; word-break: keep-all; overflow-wrap: anywhere; }
 .editor p { margin: 0 0 4px; }
 .editor h1 { font-size: 26px; margin: 18px 0 6px; } .editor h2 { font-size: 21px; margin: 16px 0 6px; } .editor h3 { font-size: 17px; margin: 14px 0 4px; }
-.editor ul, .editor ol { margin: 2px 0 6px; padding-left: 26px; }
+/* 목록: 기호가 줄 맨 왼쪽(보통 글과 같은 자리)에서 시작하도록 앞 여백 없음. Tab으로 들인 목록만 들여 씀 */
+.editor ul, .editor ol { margin: 2px 0 6px; padding-left: .95em; }
+.editor ol { padding-left: 1.2em; }
+.editor li > ul, .editor li > ol { padding-left: 1.6em; margin: 0; }
 .editor ul.checklist { list-style: none; padding-left: 2px; }
 .editor ul.checklist > li { position: relative; padding-left: 28px; }
 .editor ul.checklist > li::before { content: ""; position: absolute; left: 2px; top: .3em; width: 16px; height: 16px; border: 1.5px solid var(--muted); border-radius: 4px; background: var(--paper); cursor: pointer; }
@@ -383,6 +391,9 @@ body.focus .page { padding-top: 40px; }
 /* 대시 목록 (- 띄어쓰기) */
 .editor ul.dash { list-style-type: "-  "; }
 .editor ul.dash > li::marker { color: var(--ink); }
+/* 쌍점 목록 (: 띄어쓰기) */
+.editor ul.colon { list-style-type: ":  "; }
+.editor ul.colon > li::marker { color: var(--ink); }
 
 .nb-actions { display: flex; flex-wrap: wrap; }
 .nb-actions .add { flex: 1; margin: 6px 4px 10px; white-space: nowrap; }
