@@ -976,6 +976,39 @@ function applyPageWidth(p) {
   });
 })();
 
+// ---------- 본문을 눌렀을 때 화면이 저절로 움직이지 않게 ----------
+// 휴대폰·폴드는 키보드가 올라올 때 브라우저가 스스로 화면을 굴림 → 누른 자리(커서)가 보이는 한 원래 자리로 되돌림
+(() => {
+  const cv = $('canvas');
+  let guard = null;
+  const caretRect = () => {
+    const s = getSelection(); if (!s.rangeCount) return null;
+    const r = s.getRangeAt(0).cloneRange(); r.collapse(true);
+    let b = r.getBoundingClientRect();
+    if (!b.height) { const n = r.startContainer; const el = n.nodeType === 1 ? (n.childNodes[r.startOffset] || n) : n.parentElement; b = el?.getBoundingClientRect?.() || b; }
+    return b.height ? b : null;
+  };
+  const restore = () => {
+    if (!guard || performance.now() > guard.until) { guard = null; return; }
+    const doc = document.scrollingElement;
+    if (doc.scrollTop) doc.scrollTop = 0; // 화면 전체가 밀린 경우
+    const d = cv.scrollTop - guard.top; if (!d) return;
+    const c = caretRect(); if (!c) return;
+    const box = cv.getBoundingClientRect();
+    const bottom = Math.min(box.bottom, (visualViewport?.height || innerHeight) + (visualViewport?.offsetTop || 0)) - 8;
+    const y = c.top + d; // 원래 자리로 되돌렸을 때 커서 위치
+    if (y >= box.top && y + c.height <= bottom) cv.scrollTop = guard.top; // 그래도 커서가 보이면 되돌림
+  };
+  const arm = () => { guard = { top: cv.scrollTop, until: performance.now() + 900 }; };
+  cv.addEventListener('touchstart', e => { if ($('editor').contains(e.target)) arm(); }, { passive: true });
+  cv.addEventListener('touchmove', () => { guard = null; }, { passive: true }); // 손가락으로 굴리는 건 그대로
+  cv.addEventListener('mousedown', e => { if ($('editor').contains(e.target)) arm(); });
+  cv.addEventListener('wheel', () => { guard = null; }, { passive: true });
+  cv.addEventListener('scroll', restore, { passive: true });
+  addEventListener('scroll', restore, { passive: true });
+  visualViewport?.addEventListener('resize', () => requestAnimationFrame(restore));
+})();
+
 // ---------- 노트선 (보기 탭) ----------
 function applyLines(p) {
   $('editor').className = 'editor' + (p && p.lines ? ' lines-' + p.lines : '');

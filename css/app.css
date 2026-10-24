@@ -204,9 +204,13 @@ body.focus .page { padding-top: 40px; }
 .editor p { margin: 0 0 4px; }
 .editor h1 { font-size: 26px; margin: 18px 0 6px; } .editor h2 { font-size: 21px; margin: 16px 0 6px; } .editor h3 { font-size: 17px; margin: 14px 0 4px; }
 /* 목록: 기호가 줄 맨 왼쪽(보통 글과 같은 자리)에서 시작하도록 앞 여백 없음. Tab으로 들인 목록만 들여 씀 */
-.editor ul, .editor ol { margin: 2px 0 6px; padding-left: .95em; }
+.editor ul, .editor ol { margin: 0; padding-left: .95em; }
+/* 줄 간격: 목록 줄·이어 쓰는 줄도 보통 줄(p)과 똑같이 4px */
+.editor li { margin: 0 0 4px; }
+.editor li > div, .editor li > p { margin: 4px 0 0; }
 .editor ol { padding-left: 1.2em; }
-.editor li > ul, .editor li > ol { padding-left: 1.6em; margin: 0; }
+.editor li > ul, .editor li > ol { padding-left: 1.6em; margin: 4px 0 0; }
+.editor li > ul > li:last-child, .editor li > ol > li:last-child { margin-bottom: 0; }
 .editor ul.checklist { list-style: none; padding-left: 2px; }
 .editor ul.checklist > li { position: relative; padding-left: 28px; }
 .editor ul.checklist > li::before { content: ""; position: absolute; left: 2px; top: .3em; width: 16px; height: 16px; border: 1.5px solid var(--muted); border-radius: 4px; background: var(--paper); cursor: pointer; }
